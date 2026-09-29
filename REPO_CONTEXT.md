@@ -56,6 +56,7 @@ This repository holds the new Flutter `neuradix_pos` client.
 - The stored `instance_url` drives all backend calls and defaults to `http://neuradix-cassar.localhost:8008`
 - Same-machine macOS development should use `http://neuradix-cassar.localhost:8008` or `http://127.0.0.1:8008`; use the LAN IP only from another device
 - Android emulator builds rewrite `127.0.0.1`, `localhost`, and local `.localhost` Neuradix bench aliases to `10.0.2.2` at runtime so both dedicated and hosted benches are reachable without custom per-device setup
+- Android release networking is declared in `android/app/src/main/AndroidManifest.xml`; cleartext transport remains explicitly enabled while the shared certification backend is served from `http://167.172.37.224:8089`, and should be disabled when production moves to HTTPS/WSS
 - Existing app installs are upgraded in place by the local SQLite migration path; do not assume a clean DB on developer machines
 - The fifth left-rail tab is `Plan & Sync`, which owns day selection, rep visit plans, and offline customer-price/image sync
 - Offline ordering is strict for customer pricing: if a customer's day pack has not been synced, the app must block offline ordering for that customer
