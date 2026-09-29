@@ -2730,7 +2730,8 @@ class _HostedImageSelection {
       hostedImageDataUri(fileName: fileName, bytes: bytes, mimeType: mimeType);
 }
 
-class _HostedShellViewState extends State<_HostedShellView> {
+class _HostedShellViewState extends State<_HostedShellView>
+    with WidgetsBindingObserver {
   static const List<({String label, IconData icon})> _railItems =
       <({String label, IconData icon})>[
         (label: 'Inventory', icon: Icons.inventory_2_outlined),
@@ -2801,6 +2802,7 @@ class _HostedShellViewState extends State<_HostedShellView> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _apiClient = NeuradixApiClient(
       baseUrl: widget.config.baseUrl,
       apiKey: widget.session.apiKey,
@@ -2830,6 +2832,7 @@ class _HostedShellViewState extends State<_HostedShellView> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _customerSearchFocusNode
       ..removeListener(_handleCustomerSearchFocusChange)
       ..dispose();
@@ -2840,6 +2843,44 @@ class _HostedShellViewState extends State<_HostedShellView> {
     _localSyncDiagnosticsTimer?.cancel();
     unawaited(_relayWorker?.stop());
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_resumeLocalSync());
+    }
+  }
+
+  Future<void> _resumeLocalSync() async {
+    final worker = _relayWorker;
+    if (worker == null || !mounted) {
+      return;
+    }
+    try {
+      final connected = await worker.reconnectAndFlush();
+      if (!mounted) {
+        return;
+      }
+      if (!connected) {
+        setState(() {
+          _offline = true;
+          _statusMessage = localSyncOfflineMessage;
+        });
+        return;
+      }
+      await _reloadLocalSyncData();
+    } on Exception catch (error) {
+      if (mounted) {
+        setState(() {
+          _offline = true;
+          _statusMessage = formatConnectionError(
+            error,
+            baseUrl: widget.config.baseUrl,
+          );
+        });
+      }
+    }
   }
 
   Future<void> _initializeHostedShell() async {
@@ -3050,13 +3091,20 @@ class _HostedShellViewState extends State<_HostedShellView> {
         try {
           final metadata = await _apiClient.getLocalSyncMetadata();
           await widget.localSyncCoordinator!.refreshTrustedPeers(metadata);
-          await _relayWorker?.flushPending();
+          final worker = _relayWorker;
+          if (worker == null || !await worker.reconnectAndFlush()) {
+            throw StateError(localSyncOfflineMessage);
+          }
           await _reloadLocalSyncData();
           await _refreshLocalSyncDiagnostics(includeMetadata: true);
           if (mounted) {
             setState(() {
               _busy = false;
-              _statusMessage = 'Local multi-shop data is up to date.';
+              _offline = false;
+              _statusMessage =
+                  worker.onlinePeerCount == 0
+                      ? 'Relay reconnected. Open another trusted register to transfer queued changes.'
+                      : 'Relay reconnected to ${worker.onlinePeerCount} trusted ${worker.onlinePeerCount == 1 ? 'register' : 'registers'}; queued changes are syncing.';
             });
           }
         } on Exception catch (error) {

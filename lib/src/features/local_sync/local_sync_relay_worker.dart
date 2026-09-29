@@ -29,6 +29,7 @@ typedef LocalSyncMetadataRefresher = Future<Map<String, dynamic>> Function();
 typedef LocalSyncRelayCallback = FutureOr<void> Function();
 typedef LocalSyncRelayStatusCallback =
     void Function(LocalSyncRelayStatus status, String message);
+typedef LocalSyncClock = DateTime Function();
 
 class WebSocketLocalSyncRelaySocket implements LocalSyncRelaySocket {
   WebSocketLocalSyncRelaySocket._(this._channel);
@@ -62,7 +63,12 @@ class LocalSyncRelayWorker {
     this.onStatusChanged,
     LocalSyncRelayConnector? connector,
     this.periodicInterval = const Duration(seconds: 2),
-  }) : _connector = connector ?? WebSocketLocalSyncRelaySocket.connect;
+    this.heartbeatInterval = const Duration(seconds: 10),
+    this.heartbeatTimeout = const Duration(seconds: 45),
+    this.metadataRefreshInterval = const Duration(seconds: 30),
+    LocalSyncClock? clock,
+  }) : _connector = connector ?? WebSocketLocalSyncRelaySocket.connect,
+       _clock = clock ?? DateTime.now;
 
   final LocalSyncCoordinator coordinator;
   final LocalSyncRelayTokenProvider issueToken;
@@ -70,17 +76,27 @@ class LocalSyncRelayWorker {
   final LocalSyncRelayCallback? onDataChanged;
   final LocalSyncRelayStatusCallback? onStatusChanged;
   final Duration periodicInterval;
+  final Duration heartbeatInterval;
+  final Duration heartbeatTimeout;
+  final Duration metadataRefreshInterval;
   final LocalSyncRelayConnector _connector;
+  final LocalSyncClock _clock;
 
   LocalSyncRelaySocket? _socket;
   StreamSubscription<Object?>? _subscription;
   Timer? _timer;
   Future<void>? _connectFuture;
+  Future<bool>? _reconnectFuture;
   Future<void> _messageQueue = Future<void>.value();
   bool _stopped = true;
   bool _flushing = false;
+  DateTime? _lastInboundAt;
+  DateTime? _lastHeartbeatAt;
+  DateTime? _lastMetadataRefreshAt;
+  final Set<String> _onlineDeviceIds = <String>{};
 
   bool get isConnected => _socket != null;
+  int get onlinePeerCount => _onlineDeviceIds.length;
 
   Future<void> start() async {
     if (!_stopped) {
@@ -97,13 +113,45 @@ class LocalSyncRelayWorker {
     _stopped = true;
     _timer?.cancel();
     _timer = null;
-    final subscription = _subscription;
-    _subscription = null;
-    await subscription?.cancel();
     final socket = _socket;
-    _socket = null;
-    await socket?.close();
+    if (socket != null) {
+      await _retireSocket(socket, emitOffline: false);
+    }
     _emitStatus(LocalSyncRelayStatus.stopped, 'Local sync stopped.');
+  }
+
+  Future<bool> reconnectAndFlush() {
+    return _reconnectFuture ??= _replaceConnectionAndFlush().whenComplete(() {
+      _reconnectFuture = null;
+    });
+  }
+
+  Future<bool> _replaceConnectionAndFlush() async {
+    if (_stopped) {
+      await start();
+    } else {
+      final connecting = _connectFuture;
+      if (connecting != null) {
+        await connecting;
+      }
+      final socket = _socket;
+      if (socket != null) {
+        await _retireSocket(socket, emitOffline: false);
+      }
+      await _ensureConnected();
+    }
+    final socket = _socket;
+    if (socket == null) {
+      return false;
+    }
+    try {
+      await _sendHeartbeatIfDue(socket, force: true);
+      await flushPending();
+      return identical(_socket, socket);
+    } on Object {
+      await _retireSocket(socket, emitOffline: true);
+      return false;
+    }
   }
 
   Future<void> flushPending() async {
@@ -115,6 +163,9 @@ class LocalSyncRelayWorker {
     try {
       final pending = await coordinator.repository.readPendingEvents();
       for (final event in pending) {
+        if (!identical(_socket, socket)) {
+          return;
+        }
         try {
           socket.send(
             jsonEncode(<String, Object?>{
@@ -141,8 +192,30 @@ class LocalSyncRelayWorker {
       await _ensureConnected();
       return;
     }
-    await flushPending();
+    final socket = _socket;
+    if (socket == null) {
+      return;
+    }
+    final now = _clock();
+    final lastInboundAt = _lastInboundAt;
+    if (lastInboundAt != null &&
+        now.difference(lastInboundAt) >= heartbeatTimeout) {
+      await _retireSocket(socket, emitOffline: true);
+      await _ensureConnected();
+      return;
+    }
+    try {
+      await _sendHeartbeatIfDue(socket);
+      await _refreshTrustedPeersIfDue();
+      await flushPending();
+    } on Object {
+      await _retireSocket(socket, emitOffline: true);
+      await _ensureConnected();
+    }
   }
+
+  @visibleForTesting
+  Future<void> runMaintenanceCycle() => _tick();
 
   Future<void> _ensureConnected() {
     if (_stopped || _socket != null) {
@@ -158,6 +231,7 @@ class LocalSyncRelayWorker {
       LocalSyncRelayStatus.connecting,
       'Connecting to trusted registers.',
     );
+    LocalSyncRelaySocket? connectedSocket;
     try {
       final issued = await issueToken();
       final relayUrl = normalizeLocalSyncRelayUrlForRuntime(
@@ -175,46 +249,96 @@ class LocalSyncRelayWorker {
         },
       );
       final socket = await _connector(uri);
+      connectedSocket = socket;
       if (_stopped) {
         await socket.close();
         return;
       }
       _socket = socket;
+      _lastInboundAt = _clock();
+      _lastHeartbeatAt = null;
+      _lastMetadataRefreshAt = null;
+      _onlineDeviceIds.clear();
       _subscription = socket.messages.listen(
         (Object? frame) {
+          if (!identical(_socket, socket)) {
+            return;
+          }
+          _lastInboundAt = _clock();
           _messageQueue = _messageQueue
-              .then((_) => _handleFrame(frame))
+              .then((_) => _handleFrame(frame, socket))
               .catchError((Object error) {
-                _emitStatus(
-                  LocalSyncRelayStatus.offline,
-                  'A local sync frame was rejected: $error',
-                );
+                if (identical(_socket, socket)) {
+                  _emitStatus(
+                    LocalSyncRelayStatus.connected,
+                    'Relay connected, but a sync frame was rejected: $error',
+                  );
+                }
               });
         },
         onError: (Object error, StackTrace stackTrace) {
-          _handleDisconnect(localSyncOfflineMessage);
+          _handleDisconnect(socket, localSyncOfflineMessage);
         },
         onDone: () {
-          _handleDisconnect(localSyncOfflineMessage);
+          _handleDisconnect(socket, localSyncOfflineMessage);
         },
         cancelOnError: false,
       );
-      _emitStatus(
-        LocalSyncRelayStatus.connected,
-        'Connected to trusted registers.',
-      );
-      await _refreshTrustedPeers();
+      _emitConnectedStatus();
+      await _sendHeartbeatIfDue(socket, force: true);
+      try {
+        await _refreshTrustedPeers();
+      } on Object {
+        _emitStatus(
+          LocalSyncRelayStatus.connected,
+          'Relay connected; trusted-register metadata will retry.',
+        );
+      }
       await flushPending();
     } on Object catch (_) {
-      _handleDisconnect(localSyncOfflineMessage);
+      final socket = connectedSocket;
+      if (socket != null && identical(_socket, socket)) {
+        await _retireSocket(socket, emitOffline: true);
+      } else if (!_stopped) {
+        _emitStatus(LocalSyncRelayStatus.offline, localSyncOfflineMessage);
+      }
     }
   }
 
-  Future<void> _handleFrame(Object? rawFrame) async {
+  Future<void> _handleFrame(
+    Object? rawFrame,
+    LocalSyncRelaySocket sourceSocket,
+  ) async {
+    if (!identical(_socket, sourceSocket)) {
+      return;
+    }
     final frame = _decodeFrame(rawFrame);
     switch ('${frame['type'] ?? ''}') {
       case 'hello':
+        final onlineDevices = (frame['online_devices'] as List? ?? const [])
+            .map((Object? value) => '$value')
+            .where(
+              (String deviceId) =>
+                  deviceId.isNotEmpty &&
+                  deviceId != coordinator.profile.deviceId,
+            );
+        _onlineDeviceIds
+          ..clear()
+          ..addAll(onlineDevices);
+        _emitConnectedStatus();
+        await _refreshTrustedPeers();
+        await flushPending();
+        return;
       case 'peer_state':
+        final deviceId = '${frame['device_id'] ?? ''}';
+        if (deviceId.isNotEmpty && deviceId != coordinator.profile.deviceId) {
+          if (frame['online'] == true) {
+            _onlineDeviceIds.add(deviceId);
+          } else {
+            _onlineDeviceIds.remove(deviceId);
+          }
+        }
+        _emitConnectedStatus();
         await _refreshTrustedPeers();
         await flushPending();
         return;
@@ -236,7 +360,7 @@ class LocalSyncRelayWorker {
           await _refreshTrustedPeers();
           result = await coordinator.applyEnvelope(envelope);
         }
-        _socket?.send(
+        sourceSocket.send(
           jsonEncode(<String, Object?>{
             'type': 'ack',
             'event_id': envelope.eventId,
@@ -262,7 +386,7 @@ class LocalSyncRelayWorker {
         return;
       case 'error':
         _emitStatus(
-          LocalSyncRelayStatus.offline,
+          LocalSyncRelayStatus.connected,
           'Relay rejected a frame: ${frame['message'] ?? 'unknown error'}',
         );
         return;
@@ -274,6 +398,43 @@ class LocalSyncRelayWorker {
   Future<void> _refreshTrustedPeers() async {
     final metadata = await refreshMetadata();
     await coordinator.refreshTrustedPeers(metadata);
+    _lastMetadataRefreshAt = _clock();
+  }
+
+  Future<void> _refreshTrustedPeersIfDue() async {
+    final lastRefresh = _lastMetadataRefreshAt;
+    if (lastRefresh != null &&
+        _clock().difference(lastRefresh) < metadataRefreshInterval) {
+      return;
+    }
+    try {
+      await _refreshTrustedPeers();
+    } on Object {
+      if (_socket != null) {
+        _emitStatus(
+          LocalSyncRelayStatus.connected,
+          'Relay connected; trusted-register metadata will retry.',
+        );
+      }
+    }
+  }
+
+  Future<void> _sendHeartbeatIfDue(
+    LocalSyncRelaySocket socket, {
+    bool force = false,
+  }) async {
+    if (!identical(_socket, socket)) {
+      return;
+    }
+    final now = _clock();
+    final lastHeartbeatAt = _lastHeartbeatAt;
+    if (!force &&
+        lastHeartbeatAt != null &&
+        now.difference(lastHeartbeatAt) < heartbeatInterval) {
+      return;
+    }
+    socket.send(jsonEncode(const <String, Object?>{'type': 'ping'}));
+    _lastHeartbeatAt = now;
   }
 
   Map<String, dynamic> _decodeFrame(Object? rawFrame) {
@@ -285,16 +446,48 @@ class LocalSyncRelayWorker {
     return Map<String, dynamic>.from(decoded);
   }
 
-  void _handleDisconnect(String message) {
+  void _handleDisconnect(LocalSyncRelaySocket socket, String message) {
+    unawaited(_retireSocket(socket, emitOffline: true, message: message));
+  }
+
+  Future<void> _retireSocket(
+    LocalSyncRelaySocket socket, {
+    required bool emitOffline,
+    String message = localSyncOfflineMessage,
+  }) async {
+    if (!identical(_socket, socket)) {
+      return;
+    }
     final subscription = _subscription;
     _subscription = null;
-    unawaited(subscription?.cancel());
-    final socket = _socket;
     _socket = null;
-    unawaited(socket?.close());
-    if (!_stopped) {
+    _lastInboundAt = null;
+    _lastHeartbeatAt = null;
+    _lastMetadataRefreshAt = null;
+    _onlineDeviceIds.clear();
+    try {
+      await subscription?.cancel();
+    } on Object {
+      // The connection is already retired locally; cancellation is best effort.
+    }
+    try {
+      await socket.close();
+    } on Object {
+      // A half-open transport commonly fails while closing; reconnection continues.
+    }
+    if (!_stopped && emitOffline) {
       _emitStatus(LocalSyncRelayStatus.offline, message);
     }
+  }
+
+  void _emitConnectedStatus() {
+    final peers = onlinePeerCount;
+    _emitStatus(
+      LocalSyncRelayStatus.connected,
+      peers == 0
+          ? 'Relay connected; waiting for another trusted register.'
+          : 'Relay connected to $peers trusted ${peers == 1 ? 'register' : 'registers'}.',
+    );
   }
 
   void _emitStatus(LocalSyncRelayStatus status, String message) {

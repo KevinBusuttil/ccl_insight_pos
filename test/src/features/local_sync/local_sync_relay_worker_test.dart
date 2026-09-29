@@ -143,11 +143,165 @@ void main() {
     await worker.stop();
     await fixture.dispose();
   });
+
+  test('forced refresh replaces a half-open relay connection', () async {
+    final fixture = await _RelayFixture.create('relay_worker_refresh.db');
+    final sockets = <_FakeRelaySocket>[];
+    final worker = LocalSyncRelayWorker(
+      coordinator: fixture.sourceCoordinator,
+      issueToken:
+          () async => <String, dynamic>{
+            'relay_url': 'ws://relay.test',
+            'token': 'token',
+          },
+      refreshMetadata: () async => fixture.metadata,
+      connector: (_) async {
+        final socket = _FakeRelaySocket();
+        sockets.add(socket);
+        return socket;
+      },
+      periodicInterval: const Duration(hours: 1),
+    );
+
+    await worker.start();
+    expect(sockets, hasLength(1));
+    expect(worker.isConnected, isTrue);
+
+    expect(await worker.reconnectAndFlush(), isTrue);
+    expect(sockets, hasLength(2));
+    expect(sockets.first.isClosed, isTrue);
+    expect(worker.isConnected, isTrue);
+
+    await worker.stop();
+    await fixture.dispose();
+  });
+
+  test(
+    'concurrent refresh requests share one replacement connection',
+    () async {
+      final fixture = await _RelayFixture.create(
+        'relay_worker_concurrent_refresh.db',
+      );
+      final sockets = <_FakeRelaySocket>[];
+      final replacementReady = Completer<void>();
+      final worker = LocalSyncRelayWorker(
+        coordinator: fixture.sourceCoordinator,
+        issueToken:
+            () async => <String, dynamic>{
+              'relay_url': 'ws://relay.test',
+              'token': 'token',
+            },
+        refreshMetadata: () async => fixture.metadata,
+        connector: (_) async {
+          if (sockets.isNotEmpty) {
+            await replacementReady.future;
+          }
+          final socket = _FakeRelaySocket();
+          sockets.add(socket);
+          return socket;
+        },
+        periodicInterval: const Duration(hours: 1),
+      );
+
+      await worker.start();
+      final firstRefresh = worker.reconnectAndFlush();
+      final secondRefresh = worker.reconnectAndFlush();
+      replacementReady.complete();
+
+      expect(await Future.wait(<Future<bool>>[firstRefresh, secondRefresh]), [
+        true,
+        true,
+      ]);
+      expect(sockets, hasLength(2));
+      expect(sockets.first.isClosed, isTrue);
+
+      await worker.stop();
+      await fixture.dispose();
+    },
+  );
+
+  test('heartbeat timeout reconnects a silent relay socket', () async {
+    final fixture = await _RelayFixture.create('relay_worker_heartbeat.db');
+    final sockets = <_FakeRelaySocket>[];
+    var now = DateTime.utc(2026, 9, 29, 12);
+    final worker = LocalSyncRelayWorker(
+      coordinator: fixture.sourceCoordinator,
+      issueToken:
+          () async => <String, dynamic>{
+            'relay_url': 'ws://relay.test',
+            'token': 'token',
+          },
+      refreshMetadata: () async => fixture.metadata,
+      connector: (_) async {
+        final socket = _FakeRelaySocket();
+        sockets.add(socket);
+        return socket;
+      },
+      periodicInterval: const Duration(hours: 1),
+      heartbeatInterval: const Duration(seconds: 10),
+      heartbeatTimeout: const Duration(seconds: 30),
+      metadataRefreshInterval: const Duration(hours: 1),
+      clock: () => now,
+    );
+
+    await worker.start();
+    expect(
+      sockets.single.sent.any(
+        (Map<String, dynamic> frame) => frame['type'] == 'ping',
+      ),
+      isTrue,
+    );
+
+    now = now.add(const Duration(seconds: 31));
+    await worker.runMaintenanceCycle();
+
+    expect(sockets, hasLength(2));
+    expect(sockets.first.isClosed, isTrue);
+    expect(worker.isConnected, isTrue);
+
+    await worker.stop();
+    await fixture.dispose();
+  });
+
+  test('tracks online peers from relay hello and peer-state frames', () async {
+    final fixture = await _RelayFixture.create('relay_worker_peers.db');
+    final socket = _FakeRelaySocket();
+    final worker = LocalSyncRelayWorker(
+      coordinator: fixture.sourceCoordinator,
+      issueToken:
+          () async => <String, dynamic>{
+            'relay_url': 'ws://relay.test',
+            'token': 'token',
+          },
+      refreshMetadata: () async => fixture.metadata,
+      connector: (_) async => socket,
+      periodicInterval: const Duration(hours: 1),
+    );
+
+    await worker.start();
+    socket.add(<String, Object?>{
+      'type': 'hello',
+      'online_devices': <String>['device-a', 'device-b'],
+    });
+    await _waitUntil(() => worker.onlinePeerCount == 1);
+
+    socket.add(<String, Object?>{
+      'type': 'peer_state',
+      'device_id': 'device-b',
+      'online': false,
+    });
+    await _waitUntil(() => worker.onlinePeerCount == 0);
+
+    await worker.stop();
+    await fixture.dispose();
+  });
 }
 
 class _FakeRelaySocket implements LocalSyncRelaySocket {
   final StreamController<Object?> _controller = StreamController<Object?>();
   final List<Map<String, dynamic>> sent = <Map<String, dynamic>>[];
+
+  bool get isClosed => _controller.isClosed;
 
   @override
   Stream<Object?> get messages => _controller.stream;
@@ -160,7 +314,11 @@ class _FakeRelaySocket implements LocalSyncRelaySocket {
   }
 
   @override
-  Future<void> close() => _controller.close();
+  Future<void> close() async {
+    if (!_controller.isClosed) {
+      await _controller.close();
+    }
+  }
 }
 
 class _RelayFixture {
