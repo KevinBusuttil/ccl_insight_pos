@@ -20,6 +20,13 @@ class BootstrapConfig {
     this.businessName = '',
     this.deviceId = '',
     this.deviceName = '',
+    this.syncMode = 'device_local',
+    this.relayUrl = '',
+    this.protocolVersion = 1,
+    this.metadataOnly = false,
+    this.featureLocalMultiShopSync = false,
+    this.shopId = '',
+    this.shopName = '',
   });
 
   final String baseUrl;
@@ -39,6 +46,13 @@ class BootstrapConfig {
   final String businessName;
   final String deviceId;
   final String deviceName;
+  final String syncMode;
+  final String relayUrl;
+  final int protocolVersion;
+  final bool metadataOnly;
+  final bool featureLocalMultiShopSync;
+  final String shopId;
+  final String shopName;
 
   Map<String, String> asMap() {
     return <String, String>{
@@ -59,6 +73,13 @@ class BootstrapConfig {
       'business_name': businessName,
       'device_id': deviceId,
       'device_name': deviceName,
+      'sync_mode': syncMode,
+      'relay_url': relayUrl,
+      'protocol_version': '$protocolVersion',
+      'metadata_only': metadataOnly ? '1' : '0',
+      'feature_local_multi_shop_sync': featureLocalMultiShopSync ? '1' : '0',
+      'shop_id': shopId,
+      'shop_name': shopName,
     };
   }
 
@@ -80,6 +101,13 @@ class BootstrapConfig {
     String? businessName,
     String? deviceId,
     String? deviceName,
+    String? syncMode,
+    String? relayUrl,
+    int? protocolVersion,
+    bool? metadataOnly,
+    bool? featureLocalMultiShopSync,
+    String? shopId,
+    String? shopName,
   }) {
     return BootstrapConfig(
       baseUrl: baseUrl ?? this.baseUrl,
@@ -99,6 +127,14 @@ class BootstrapConfig {
       businessName: businessName ?? this.businessName,
       deviceId: deviceId ?? this.deviceId,
       deviceName: deviceName ?? this.deviceName,
+      syncMode: syncMode ?? this.syncMode,
+      relayUrl: relayUrl ?? this.relayUrl,
+      protocolVersion: protocolVersion ?? this.protocolVersion,
+      metadataOnly: metadataOnly ?? this.metadataOnly,
+      featureLocalMultiShopSync:
+          featureLocalMultiShopSync ?? this.featureLocalMultiShopSync,
+      shopId: shopId ?? this.shopId,
+      shopName: shopName ?? this.shopName,
     );
   }
 }

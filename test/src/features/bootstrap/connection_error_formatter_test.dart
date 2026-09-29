@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:neuradix_pos/src/features/bootstrap/connection_error_formatter.dart';
 
@@ -10,12 +11,29 @@ void main() {
         'address = 192.168.1.40, port = 8008',
       ),
       baseUrl: 'http://192.168.1.40:8008',
+      platform: TargetPlatform.macOS,
     );
 
     expect(message, contains('com.apple.security.network.client'));
     expect(message, contains('clean and rebuild the macOS target'));
     expect(message, contains('http://127.0.0.1:8008'));
     expect(message, contains('Use the LAN IP only from another device.'));
+  });
+
+  test('uses generic reachability guidance for Android network failures', () {
+    final message = formatConnectionError(
+      Exception(
+        'ClientException with SocketException: Network is unreachable '
+        '(OS Error: Operation not permitted, errno = 1)',
+      ),
+      baseUrl: 'http://167.172.37.224:8089',
+      platform: TargetPlatform.android,
+    );
+
+    expect(message, contains('Unable to reach http://167.172.37.224:8089'));
+    expect(message, contains('reachable from this device'));
+    expect(message, isNot(contains('macOS app')));
+    expect(message, isNot(contains('com.apple.security.network.client')));
   });
 
   test('formats generic reachability failures with bench start guidance', () {

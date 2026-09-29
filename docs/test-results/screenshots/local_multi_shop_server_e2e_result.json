@@ -1,0 +1,33 @@
+{
+  "timestamp_utc": "2026-09-29T13:07:51.832980+00:00",
+  "run_id": "130717",
+  "business_id": "NBIZ-00004",
+  "shop_a": {
+    "business_id": "NBIZ-00004",
+    "shop_id": "q9r0ns0mka",
+    "shop_name": "ABP Shop A",
+    "device_id": "neuradix-device-1790668708484",
+    "item_count": 4,
+    "customer_count": 6,
+    "sale_count": 18,
+    "outgoing_sale_count": 9,
+    "pending_count": 0
+  },
+  "shop_b": {
+    "business_id": "NBIZ-00004",
+    "shop_id": "s4uatqukf2",
+    "shop_name": "ABP Shop B",
+    "device_id": "neuradix-device-1790670186557",
+    "item_count": 4,
+    "customer_count": 6,
+    "sale_count": 18,
+    "outgoing_sale_count": 9,
+    "pending_count": 0
+  },
+  "expected": {
+    "sales_per_register": 18,
+    "customers_per_register": 6,
+    "items_per_register": 4,
+    "pending_per_register": 0
+  }
+}

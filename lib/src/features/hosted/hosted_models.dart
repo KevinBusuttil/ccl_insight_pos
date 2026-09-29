@@ -10,6 +10,10 @@ class HostedBusinessProfile {
     required this.planType,
     required this.subscriptionStatus,
     required this.deploymentMode,
+    this.syncMode = 'device_local',
+    this.metadataOnly = false,
+    this.relayUrl = '',
+    this.protocolVersion = 1,
     this.planCaps = const <String, Object?>{},
     this.features = const <String, bool>{},
   });
@@ -22,6 +26,10 @@ class HostedBusinessProfile {
   final String planType;
   final String subscriptionStatus;
   final String deploymentMode;
+  final String syncMode;
+  final bool metadataOnly;
+  final String relayUrl;
+  final int protocolVersion;
   final Map<String, Object?> planCaps;
   final Map<String, bool> features;
 
@@ -43,6 +51,21 @@ class HostedBusinessProfile {
           '${businessJson['subscription_status'] ?? json['subscription_status'] ?? 'active'}',
       deploymentMode:
           '${businessJson['deployment_mode'] ?? json['deployment_mode'] ?? 'neuradix_cloud'}',
+      syncMode:
+          '${businessJson['sync_mode'] ?? json['sync_mode'] ?? 'device_local'}',
+      metadataOnly:
+          businessJson['metadata_only'] == true ||
+          businessJson['metadata_only'] == 1 ||
+          businessJson['metadata_only'] == '1' ||
+          json['metadata_only'] == true ||
+          json['metadata_only'] == 1 ||
+          json['metadata_only'] == '1',
+      relayUrl: '${businessJson['relay_url'] ?? json['relay_url'] ?? ''}',
+      protocolVersion:
+          int.tryParse(
+            '${businessJson['protocol_version'] ?? json['protocol_version'] ?? 1}',
+          ) ??
+          1,
       planCaps: Map<String, Object?>.from(
         ((businessJson['plan_caps'] as Map?) ??
                 (json['plan_caps'] as Map?) ??
@@ -71,6 +94,10 @@ class HostedBusinessProfile {
       'plan_type': planType,
       'subscription_status': subscriptionStatus,
       'deployment_mode': deploymentMode,
+      'sync_mode': syncMode,
+      'metadata_only': metadataOnly,
+      'relay_url': relayUrl,
+      'protocol_version': protocolVersion,
       'plan_caps': planCaps,
       'features': features,
     };
@@ -89,6 +116,10 @@ class HostedBusinessProfile {
     String? subscriptionStatus,
     Map<String, Object?>? planCaps,
     Map<String, bool>? features,
+    String? syncMode,
+    bool? metadataOnly,
+    String? relayUrl,
+    int? protocolVersion,
   }) {
     return HostedBusinessProfile(
       businessId: businessId,
@@ -99,6 +130,10 @@ class HostedBusinessProfile {
       planType: planType ?? this.planType,
       subscriptionStatus: subscriptionStatus ?? this.subscriptionStatus,
       deploymentMode: deploymentMode,
+      syncMode: syncMode ?? this.syncMode,
+      metadataOnly: metadataOnly ?? this.metadataOnly,
+      relayUrl: relayUrl ?? this.relayUrl,
+      protocolVersion: protocolVersion ?? this.protocolVersion,
       planCaps: planCaps ?? this.planCaps,
       features: features ?? this.features,
     );
@@ -315,6 +350,10 @@ class HostedSaleLine {
     required this.displayName,
     required this.qty,
     required this.rate,
+    this.sku = '',
+    this.barcode = '',
+    this.discountAmount = 0,
+    this.taxAmount = 0,
     this.notes = '',
   });
 
@@ -322,16 +361,25 @@ class HostedSaleLine {
   final String displayName;
   final double qty;
   final double rate;
+  final String sku;
+  final String barcode;
+  final double discountAmount;
+  final double taxAmount;
   final String notes;
 
-  double get amount => qty * rate;
+  double get grossAmount => qty * rate;
+  double get amount => grossAmount - discountAmount + taxAmount;
 
   Map<String, Object?> toJson() {
     return <String, Object?>{
       'item_id': itemId,
+      'sku': sku,
+      'barcode': barcode,
       'item_name': displayName,
       'qty': qty,
       'rate': rate,
+      'discount_amount': discountAmount,
+      'tax_amount': taxAmount,
       'amount': amount,
       'notes': notes,
     };
@@ -340,9 +388,13 @@ class HostedSaleLine {
   factory HostedSaleLine.fromJson(Map<String, dynamic> json) {
     return HostedSaleLine(
       itemId: '${json['item_id'] ?? json['item_code'] ?? ''}',
+      sku: '${json['sku'] ?? json['item_code'] ?? ''}',
+      barcode: '${json['barcode'] ?? ''}',
       displayName: '${json['item_name'] ?? json['display_name'] ?? ''}',
       qty: double.tryParse('${json['qty'] ?? 0}') ?? 0,
       rate: double.tryParse('${json['rate'] ?? 0}') ?? 0,
+      discountAmount: double.tryParse('${json['discount_amount'] ?? 0}') ?? 0,
+      taxAmount: double.tryParse('${json['tax_amount'] ?? 0}') ?? 0,
       notes: '${json['notes'] ?? ''}',
     );
   }

@@ -108,6 +108,9 @@ class NeuradixApiClient {
     required String deviceId,
     required String deviceName,
     required String planType,
+    String syncMode = '',
+    String shopName = '',
+    String shopCode = '',
   }) async {
     final response = await _callMethod(
       'neuradix.api.v1.auth.register_business',
@@ -121,6 +124,9 @@ class NeuradixApiClient {
         'device_id': deviceId,
         'device_name': deviceName,
         'plan_type': planType,
+        if (syncMode.isNotEmpty) 'sync_mode': syncMode,
+        if (shopName.isNotEmpty) 'shop_name': shopName,
+        if (shopCode.isNotEmpty) 'shop_code': shopCode,
       },
     );
     return _parseHostedAuthResult(response);
@@ -134,6 +140,9 @@ class NeuradixApiClient {
     required String deviceId,
     required String deviceName,
     required String planType,
+    String syncMode = '',
+    String shopName = '',
+    String shopCode = '',
   }) async {
     final outcome = await _callMethodOutcome(
       'neuradix.api.v1.auth.register_business',
@@ -147,6 +156,9 @@ class NeuradixApiClient {
         'device_id': deviceId,
         'device_name': deviceName,
         'plan_type': planType,
+        if (syncMode.isNotEmpty) 'sync_mode': syncMode,
+        if (shopName.isNotEmpty) 'shop_name': shopName,
+        if (shopCode.isNotEmpty) 'shop_code': shopCode,
       },
     );
     if (outcome.error != null) {
@@ -196,6 +208,156 @@ class NeuradixApiClient {
       return HostedAuthAttempt(error: outcome.error);
     }
     return HostedAuthAttempt(auth: _parseHostedAuthResult(outcome.payload!));
+  }
+
+  Future<Map<String, dynamic>> getLocalSyncMetadata() async {
+    final payload = await _callMethod(
+      'neuradix.api.v1.local_sync.get_metadata',
+    );
+    return _unwrapMessageMap(payload);
+  }
+
+  Future<Map<String, dynamic>> registerFirstLocalSyncDevice({
+    required String deviceId,
+    required String deviceName,
+    required String signingPublicKey,
+    required String exchangePublicKey,
+    String shopId = '',
+    String shopName = '',
+    String shopCode = '',
+  }) async {
+    final payload = await _callMethod(
+      'neuradix.api.v1.local_sync.register_first_device',
+      method: 'POST',
+      body: <String, String>{
+        'device_id': deviceId,
+        'device_name': deviceName,
+        'signing_public_key': signingPublicKey,
+        'exchange_public_key': exchangePublicKey,
+        if (shopId.isNotEmpty) 'shop_id': shopId,
+        if (shopName.isNotEmpty) 'shop_name': shopName,
+        if (shopCode.isNotEmpty) 'shop_code': shopCode,
+      },
+    );
+    return _unwrapMessageMap(payload);
+  }
+
+  Future<Map<String, dynamic>> createLocalSyncShop({
+    required String shopName,
+    required String shopCode,
+  }) async {
+    final payload = await _callMethod(
+      'neuradix.api.v1.local_sync.create_shop',
+      method: 'POST',
+      body: <String, String>{'shop_name': shopName, 'shop_code': shopCode},
+    );
+    return _unwrapMessageMap(payload);
+  }
+
+  Future<Map<String, dynamic>> assignLocalSyncDeviceShop({
+    required String deviceId,
+    required String shopId,
+  }) async {
+    final payload = await _callMethod(
+      'neuradix.api.v1.local_sync.assign_device_shop',
+      method: 'POST',
+      body: <String, String>{'device_id': deviceId, 'shop_id': shopId},
+    );
+    return _unwrapMessageMap(payload);
+  }
+
+  Future<Map<String, dynamic>> startLocalSyncEnrollment({
+    required String deviceId,
+    required String deviceName,
+    required String signingPublicKey,
+    required String exchangePublicKey,
+    String shopId = '',
+  }) async {
+    final payload = await _callMethod(
+      'neuradix.api.v1.local_sync.start_enrollment',
+      method: 'POST',
+      body: <String, String>{
+        'device_id': deviceId,
+        'device_name': deviceName,
+        'signing_public_key': signingPublicKey,
+        'exchange_public_key': exchangePublicKey,
+        if (shopId.isNotEmpty) 'shop_id': shopId,
+      },
+    );
+    return _unwrapMessageMap(payload);
+  }
+
+  Future<Map<String, dynamic>> approveLocalSyncEnrollment({
+    required String enrollmentId,
+    required String approverDeviceId,
+    required String encryptedKeyEnvelope,
+  }) async {
+    final payload = await _callMethod(
+      'neuradix.api.v1.local_sync.approve_enrollment',
+      method: 'POST',
+      body: <String, String>{
+        'enrollment_id': enrollmentId,
+        'approver_device_id': approverDeviceId,
+        'encrypted_key_envelope': encryptedKeyEnvelope,
+      },
+    );
+    return _unwrapMessageMap(payload);
+  }
+
+  Future<Map<String, dynamic>> completeLocalSyncEnrollment({
+    required String enrollmentId,
+    required String deviceId,
+  }) async {
+    final payload = await _callMethod(
+      'neuradix.api.v1.local_sync.complete_enrollment',
+      method: 'POST',
+      body: <String, String>{
+        'enrollment_id': enrollmentId,
+        'device_id': deviceId,
+      },
+    );
+    return _unwrapMessageMap(payload);
+  }
+
+  Future<Map<String, dynamic>> setPreferredLocalSyncDevice({
+    required String deviceId,
+  }) async {
+    final payload = await _callMethod(
+      'neuradix.api.v1.local_sync.set_preferred_device',
+      method: 'POST',
+      body: <String, String>{'device_id': deviceId},
+    );
+    return _unwrapMessageMap(payload);
+  }
+
+  Future<Map<String, dynamic>> revokeLocalSyncDevice({
+    required String deviceId,
+    required String approvingDeviceId,
+    required int nextKeyEpoch,
+    required Map<String, String> encryptedKeyEnvelopes,
+  }) async {
+    final payload = await _callMethod(
+      'neuradix.api.v1.local_sync.revoke_device',
+      method: 'POST',
+      body: <String, String>{
+        'device_id': deviceId,
+        'approving_device_id': approvingDeviceId,
+        'next_key_epoch': '$nextKeyEpoch',
+        'encrypted_key_envelopes': jsonEncode(encryptedKeyEnvelopes),
+      },
+    );
+    return _unwrapMessageMap(payload);
+  }
+
+  Future<Map<String, dynamic>> issueLocalSyncRelayToken({
+    required String deviceId,
+  }) async {
+    final payload = await _callMethod(
+      'neuradix.api.v1.local_sync.issue_relay_token',
+      method: 'POST',
+      body: <String, String>{'device_id': deviceId},
+    );
+    return _unwrapMessageMap(payload);
   }
 
   Future<Map<String, dynamic>> forgotPassword(String user) {
@@ -935,6 +1097,7 @@ class NeuradixApiClient {
             '${message['hub_manager'] ?? message['email'] ?? message['username'] ?? ''}',
         'deployment_mode': 'neuradix_cloud',
         'plan_type': '${subscription['plan_type'] ?? business.planType}',
+        'sync_mode': '${subscription['sync_mode'] ?? business.syncMode}',
         'business_id': business.businessId,
         'business_name': business.businessName,
       },

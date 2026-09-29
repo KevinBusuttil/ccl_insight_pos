@@ -150,4 +150,54 @@ void main() {
       expect(preparedCustomer.customerId, hostedLocalCustomerId(timestamp));
     },
   );
+
+  test('clears the cart after a sale is safely queued locally', () {
+    const cart = <HostedSaleLine>[
+      HostedSaleLine(
+        itemId: 'NPROD-0001',
+        displayName: 'Classic Blend Beans',
+        qty: 1,
+        rate: 11.5,
+      ),
+    ];
+
+    expect(
+      hostedCartAfterSaleFailure(currentCart: cart, savedLocally: true),
+      isEmpty,
+    );
+    expect(
+      hostedCartAfterSaleFailure(currentCart: cart, savedLocally: false),
+      cart,
+    );
+  });
+
+  test('blocks shop reassignment while local work remains', () {
+    expect(
+      localSyncShopReassignmentBlockReason(
+        pendingEvents: 0,
+        parkedOrders: 0,
+        queuedOrders: 0,
+        activeCartLines: 1,
+      ),
+      contains('active cart'),
+    );
+    expect(
+      localSyncShopReassignmentBlockReason(
+        pendingEvents: 2,
+        parkedOrders: 1,
+        queuedOrders: 0,
+        activeCartLines: 0,
+      ),
+      contains('2 sync event(s)'),
+    );
+    expect(
+      localSyncShopReassignmentBlockReason(
+        pendingEvents: 0,
+        parkedOrders: 0,
+        queuedOrders: 0,
+        activeCartLines: 0,
+      ),
+      isNull,
+    );
+  });
 }

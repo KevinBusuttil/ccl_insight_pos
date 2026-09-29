@@ -98,6 +98,10 @@ class PosBootstrapBundle {
     required this.theme,
     required this.features,
     this.planCaps = const <String, Object?>{},
+    this.syncMode = 'dedicated_backend',
+    this.relayUrl = '',
+    this.protocolVersion = 1,
+    this.metadataOnly = false,
   });
 
   final String brandName;
@@ -115,6 +119,10 @@ class PosBootstrapBundle {
   final PosThemePalette theme;
   final Map<String, bool> features;
   final Map<String, Object?> planCaps;
+  final String syncMode;
+  final String relayUrl;
+  final int protocolVersion;
+  final bool metadataOnly;
 
   factory PosBootstrapBundle.fromResponses(
     Map<String, dynamic> platformJson,
@@ -123,15 +131,31 @@ class PosBootstrapBundle {
     final featuresJson = Map<String, dynamic>.from(
       (platformJson['features'] as Map?) ?? const <String, dynamic>{},
     );
+    final deploymentMode =
+        '${platformJson['deployment_mode'] ?? 'external_backend'}';
+    final planType = '${platformJson['plan_type'] ?? 'free_local'}';
+    final fallbackSyncMode =
+        deploymentMode == 'neuradix_cloud'
+            ? (planType == 'free_cloud' || planType == 'paid_cloud'
+                ? 'hosted_backend'
+                : 'device_local')
+            : 'dedicated_backend';
     return PosBootstrapBundle(
       brandName:
           '${clientJson['brand_name'] ?? platformJson['brand_name'] ?? 'Neuradix POS'}',
       supportEmail:
           '${clientJson['support_email'] ?? platformJson['support_email'] ?? ''}',
       appName: '${platformJson['app_name'] ?? 'neuradix-pos'}',
-      deploymentMode:
-          '${platformJson['deployment_mode'] ?? 'external_backend'}',
-      planType: '${platformJson['plan_type'] ?? 'free_local'}',
+      deploymentMode: deploymentMode,
+      planType: planType,
+      syncMode: '${platformJson['sync_mode'] ?? fallbackSyncMode}',
+      relayUrl: '${platformJson['relay_url'] ?? ''}',
+      protocolVersion:
+          int.tryParse('${platformJson['protocol_version'] ?? 1}') ?? 1,
+      metadataOnly:
+          platformJson['metadata_only'] == true ||
+          platformJson['metadata_only'] == 1 ||
+          platformJson['metadata_only'] == '1',
       defaultCloudBaseUrl: normalizeBenchUrlForRuntime(
         '${platformJson['default_cloud_base_url'] ?? 'http://neuradix-cloud.localhost:8018'}',
       ),

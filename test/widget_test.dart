@@ -105,6 +105,42 @@ void main() {
     expect(repaired.deploymentMode, 'external_backend');
   });
 
+  test('hosted shell state is scoped by business and shop', () {
+    const mainShop = BootstrapConfig(
+      baseUrl: 'https://erp.neuradix.com',
+      useSsl: true,
+      deploymentMode: 'neuradix_cloud',
+      planType: 'free_local',
+      brandName: 'Neuradix POS',
+      supportEmail: 'support@neuradix.local',
+      defaultCloudBaseUrl: 'https://erp.neuradix.com',
+      themePrimary: '#2B6F77',
+      themeSecondary: '#86A96F',
+      themeAccent: '#5E6B73',
+      themeTextOnPrimary: '#FFFFFF',
+      themeSurface: '#F4F7F5',
+      themeActive: '#355B66',
+      businessId: 'NBIZ-1',
+      shopId: 'SHOP-MAIN',
+    );
+    final branchShop = mainShop.copyWith(shopId: 'SHOP-BRANCH');
+    final otherBusiness = mainShop.copyWith(businessId: 'NBIZ-2');
+
+    expect(hostedShellStateScope(mainShop), 'NBIZ-1:SHOP-MAIN');
+    expect(
+      hostedShellStateScope(branchShop),
+      isNot(hostedShellStateScope(mainShop)),
+    );
+    expect(
+      hostedShellStateScope(otherBusiness),
+      isNot(hostedShellStateScope(mainShop)),
+    );
+    expect(
+      hostedShellStateScope(mainShop.copyWith(shopName: 'Renamed Main Shop')),
+      hostedShellStateScope(mainShop),
+    );
+  });
+
   testWidgets('renders the tablet left rail entries', (
     WidgetTester tester,
   ) async {
@@ -221,6 +257,35 @@ void main() {
     expect(usernameField.enabled, isFalse);
   });
 
+  testWidgets('offers metadata-only local multi-shop registration', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: NeuradixTheme.light(),
+        home: const Scaffold(body: NeuradixHostedAuthPreview()),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Local Multi-Shop'), findsOneWidget);
+    await tester.tap(find.text('Local Multi-Shop'));
+    await tester.pump();
+
+    expect(
+      find.textContaining(
+        'Customers and finalized sales stay on trusted devices',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('permanent cloud payload storage'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('local-sync-first-shop-name')), findsOneWidget);
+    expect(find.byKey(const Key('local-sync-first-shop-code')), findsOneWidget);
+  });
+
   testWidgets('prefills the seeded local UAT login credentials', (
     WidgetTester tester,
   ) async {
@@ -287,5 +352,30 @@ void main() {
     expect(hostedSalesCartPanelWidth(919), double.infinity);
     expect(hostedSalesCartPanelWidth(1100), 360);
     expect(hostedSalesCartPanelWidth(1280), 420);
+  });
+
+  test(
+    'scrolls noncompact sales panes when the keyboard compresses height',
+    () {
+      expect(
+        hostedSalesUsesScrollableNonCompactPane(maxWidth: 1200, maxHeight: 619),
+        isTrue,
+      );
+      expect(
+        hostedSalesUsesScrollableNonCompactPane(maxWidth: 1200, maxHeight: 620),
+        isFalse,
+      );
+      expect(
+        hostedSalesUsesScrollableNonCompactPane(maxWidth: 700, maxHeight: 400),
+        isFalse,
+      );
+    },
+  );
+
+  test('keeps compact hosted content scrollable on short phone screens', () {
+    expect(hostedCompactBodyHeight(420), 520);
+    expect(hostedCompactBodyHeight(640), 520);
+    expect(hostedCompactBodyHeight(1280), 920);
+    expect(hostedCompactBodyHeight(1800), 1000);
   });
 }

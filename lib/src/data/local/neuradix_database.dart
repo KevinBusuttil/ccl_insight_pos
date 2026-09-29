@@ -4,6 +4,8 @@ import 'package:sqflite/sqflite.dart';
 import 'neuradix_database_factory_io.dart'
     if (dart.library.js_interop) 'neuradix_database_factory_web.dart';
 
+const Duration neuradixDatabaseOpenTimeout = Duration(seconds: 60);
+
 class NeuradixDatabase {
   NeuradixDatabase({
     DatabaseFactory? databaseFactoryOverride,
@@ -17,7 +19,7 @@ class NeuradixDatabase {
   Database? _database;
   String? _resolvedPath;
 
-  static const int schemaVersion = 5;
+  static const int schemaVersion = 6;
   static const List<String> expectedTables = <String>[
     'app_config',
     'customers',
@@ -37,6 +39,13 @@ class NeuradixDatabase {
     'hosted_sales',
     'hosted_sale_items',
     'hosted_upgrade_batches',
+    'local_sync_profile',
+    'local_sync_peers',
+    'local_sync_events',
+    'local_sync_event_receipts',
+    'local_sync_entity_versions',
+    'local_sync_field_versions',
+    'local_sync_conflicts',
   ];
 
   Future<Database> open() async {
@@ -250,9 +259,13 @@ class NeuradixDatabase {
       CREATE TABLE hosted_sale_items (
         sale_id TEXT NOT NULL,
         item_id TEXT NOT NULL,
+        sku TEXT NOT NULL,
+        barcode TEXT NOT NULL,
         display_name TEXT NOT NULL,
         qty REAL NOT NULL,
         rate REAL NOT NULL,
+        discount_amount REAL NOT NULL,
+        tax_amount REAL NOT NULL,
         amount REAL NOT NULL,
         notes TEXT NOT NULL,
         PRIMARY KEY (sale_id, item_id)
@@ -267,6 +280,7 @@ class NeuradixDatabase {
         updated_at TEXT NOT NULL
       )
       ''');
+    await _createLocalSyncTables(db);
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -284,6 +298,9 @@ class NeuradixDatabase {
     }
     if (oldVersion < 5) {
       await _migrateToVersion5(db);
+    }
+    if (oldVersion < 6) {
+      await _migrateToVersion6(db);
     }
     await _ensureCurrentSchema(db);
   }
@@ -443,9 +460,13 @@ class NeuradixDatabase {
       CREATE TABLE IF NOT EXISTS hosted_sale_items (
         sale_id TEXT NOT NULL,
         item_id TEXT NOT NULL,
+        sku TEXT NOT NULL DEFAULT '',
+        barcode TEXT NOT NULL DEFAULT '',
         display_name TEXT NOT NULL,
         qty REAL NOT NULL,
         rate REAL NOT NULL,
+        discount_amount REAL NOT NULL DEFAULT 0,
+        tax_amount REAL NOT NULL DEFAULT 0,
         amount REAL NOT NULL,
         notes TEXT NOT NULL,
         PRIMARY KEY (sale_id, item_id)
@@ -471,12 +492,41 @@ class NeuradixDatabase {
     );
   }
 
+  Future<void> _migrateToVersion6(Database db) async {
+    await _ensureColumn(
+      db,
+      'hosted_sale_items',
+      'sku',
+      "TEXT NOT NULL DEFAULT ''",
+    );
+    await _ensureColumn(
+      db,
+      'hosted_sale_items',
+      'barcode',
+      "TEXT NOT NULL DEFAULT ''",
+    );
+    await _ensureColumn(
+      db,
+      'hosted_sale_items',
+      'discount_amount',
+      'REAL NOT NULL DEFAULT 0',
+    );
+    await _ensureColumn(
+      db,
+      'hosted_sale_items',
+      'tax_amount',
+      'REAL NOT NULL DEFAULT 0',
+    );
+    await _createLocalSyncTables(db);
+  }
+
   Future<void> _ensureCurrentSchema(Database db) async {
     await _createMissingTables(db);
     await _migrateToVersion2(db);
     await _migrateToVersion3(db);
     await _migrateToVersion4(db);
     await _migrateToVersion5(db);
+    await _migrateToVersion6(db);
   }
 
   Future<void> _createMissingTables(Database db) async {
@@ -591,6 +641,108 @@ class NeuradixDatabase {
         status TEXT NOT NULL,
         created_at TEXT NOT NULL
       )
+      ''');
+    await _createLocalSyncTables(db);
+  }
+
+  Future<void> _createLocalSyncTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS local_sync_profile (
+        profile_id INTEGER PRIMARY KEY,
+        business_id TEXT NOT NULL,
+        shop_id TEXT NOT NULL,
+        shop_name TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        device_name TEXT NOT NULL,
+        relay_url TEXT NOT NULL,
+        protocol_version INTEGER NOT NULL,
+        key_epoch INTEGER NOT NULL,
+        is_preferred_peer INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+      )
+      ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS local_sync_peers (
+        device_id TEXT PRIMARY KEY,
+        shop_id TEXT NOT NULL,
+        device_name TEXT NOT NULL,
+        signing_public_key TEXT NOT NULL,
+        exchange_public_key TEXT NOT NULL,
+        status TEXT NOT NULL,
+        key_epoch INTEGER NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        last_hlc TEXT NOT NULL
+      )
+      ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS local_sync_events (
+        event_id TEXT PRIMARY KEY,
+        direction TEXT NOT NULL,
+        business_id TEXT NOT NULL,
+        shop_id TEXT NOT NULL,
+        origin_device_id TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        hlc TEXT NOT NULL,
+        envelope_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+      ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS local_sync_event_receipts (
+        event_id TEXT NOT NULL,
+        peer_device_id TEXT NOT NULL,
+        acknowledged_at TEXT NOT NULL,
+        PRIMARY KEY (event_id, peer_device_id)
+      )
+      ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS local_sync_entity_versions (
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        hlc TEXT NOT NULL,
+        origin_device_id TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (entity_type, entity_id)
+      )
+      ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS local_sync_field_versions (
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        field_name TEXT NOT NULL,
+        hlc TEXT NOT NULL,
+        origin_device_id TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (entity_type, entity_id, field_name)
+      )
+      ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS local_sync_conflicts (
+        conflict_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        local_hlc TEXT NOT NULL,
+        incoming_hlc TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        details_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        resolved_at TEXT
+      )
+      ''');
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS idx_local_sync_events_pending
+      ON local_sync_events(direction, status, hlc)
+      ''');
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS idx_local_sync_events_entity
+      ON local_sync_events(entity_type, entity_id, hlc)
       ''');
   }
 

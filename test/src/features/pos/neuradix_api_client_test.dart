@@ -128,6 +128,9 @@ void main() {
             '/api/method/neuradix.api.v1.auth.register_business',
           );
           expect(request.bodyFields['plan_type'], 'free_cloud');
+          expect(request.bodyFields['sync_mode'], 'local_multi_shop');
+          expect(request.bodyFields['shop_name'], 'Valletta');
+          expect(request.bodyFields['shop_code'], 'VALLETTA');
           return http.Response(
             jsonEncode(<String, Object?>{
               'message': <String, Object?>{
@@ -141,6 +144,10 @@ void main() {
                   'support_email': 'support@neuradix.local',
                   'deployment_mode': 'neuradix_cloud',
                   'plan_type': 'free_cloud',
+                  'sync_mode': 'local_multi_shop',
+                  'relay_url': 'wss://relay.neuradix.test',
+                  'protocol_version': 1,
+                  'metadata_only': 1,
                   'default_cloud_base_url': 'http://127.0.0.1:8018',
                   'price_list': 'Standard Selling',
                   'offline_history_days': 14,
@@ -153,6 +160,7 @@ void main() {
                     'hosted_self_registration': 1,
                     'backend_history_sync': 1,
                     'staff_accounts': 0,
+                    'local_multi_shop_sync': 1,
                   },
                   'plan_caps': <String, Object?>{
                     'plan_type': 'free_cloud',
@@ -169,6 +177,10 @@ void main() {
                   'plan_type': 'free_cloud',
                   'subscription_status': 'active',
                   'deployment_mode': 'neuradix_cloud',
+                  'sync_mode': 'local_multi_shop',
+                  'metadata_only': 1,
+                  'relay_url': 'wss://relay.neuradix.test',
+                  'protocol_version': 1,
                   'plan_caps': <String, Object?>{'max_items': 500},
                   'features': <String, Object?>{
                     'backend_history_sync': 1,
@@ -195,12 +207,150 @@ void main() {
         deviceId: 'device-1',
         deviceName: 'Tablet',
         planType: 'free_cloud',
+        syncMode: 'local_multi_shop',
+        shopName: 'Valletta',
+        shopCode: 'VALLETTA',
       );
 
       expect(auth.subscriptionPlanType, 'free_cloud');
       expect(auth.business.planCaps['max_items'], 500);
       expect(auth.business.features['staff_accounts'], isFalse);
       expect(auth.bootstrapJson['plan_type'], 'free_cloud');
+      expect(auth.business.syncMode, 'local_multi_shop');
+      expect(auth.business.metadataOnly, isTrue);
+      expect(auth.business.relayUrl, 'wss://relay.neuradix.test');
+    },
+  );
+
+  test(
+    'local sync metadata and first-device registration use metadata-only APIs',
+    () async {
+      var requestCount = 0;
+      final client = NeuradixApiClient(
+        baseUrl: 'http://127.0.0.1:8018',
+        apiKey: 'key',
+        apiSecret: 'secret',
+        httpClient: MockClient((http.Request request) async {
+          requestCount += 1;
+          if (requestCount == 1) {
+            expect(
+              request.url.path,
+              '/api/method/neuradix.api.v1.local_sync.get_metadata',
+            );
+          } else {
+            expect(
+              request.url.path,
+              '/api/method/neuradix.api.v1.local_sync.register_first_device',
+            );
+            expect(request.method, 'POST');
+            expect(request.bodyFields['device_id'], 'device-1');
+            expect(request.bodyFields['signing_public_key'], 'signing-key');
+            expect(request.bodyFields.containsKey('customer'), isFalse);
+            expect(request.bodyFields.containsKey('sale'), isFalse);
+          }
+          return http.Response(
+            jsonEncode(<String, Object?>{
+              'message': <String, Object?>{
+                'business_id': 'NBIZ-00001',
+                'metadata_only': 1,
+                'devices': <Object?>[],
+              },
+            }),
+            200,
+            headers: <String, String>{'content-type': 'application/json'},
+          );
+        }),
+      );
+
+      final metadata = await client.getLocalSyncMetadata();
+      final registration = await client.registerFirstLocalSyncDevice(
+        deviceId: 'device-1',
+        deviceName: 'Main Till',
+        signingPublicKey: 'signing-key',
+        exchangePublicKey: 'exchange-key',
+      );
+
+      expect(metadata['metadata_only'], 1);
+      expect(registration['business_id'], 'NBIZ-00001');
+      expect(requestCount, 2);
+    },
+  );
+
+  test(
+    'local sync trust-management calls never send business payloads',
+    () async {
+      final requests = <http.Request>[];
+      final client = NeuradixApiClient(
+        baseUrl: 'http://127.0.0.1:8018',
+        apiKey: 'key',
+        apiSecret: 'secret',
+        httpClient: MockClient((http.Request request) async {
+          requests.add(request);
+          return http.Response(
+            jsonEncode(<String, Object?>{
+              'message': <String, Object?>{'ok': 1},
+            }),
+            200,
+            headers: <String, String>{'content-type': 'application/json'},
+          );
+        }),
+      );
+
+      await client.createLocalSyncShop(
+        shopName: 'ABP Valletta',
+        shopCode: 'ABP-VLT',
+      );
+      await client.assignLocalSyncDeviceShop(
+        deviceId: 'device-1',
+        shopId: 'SHOP-2',
+      );
+      await client.startLocalSyncEnrollment(
+        deviceId: 'device-2',
+        deviceName: 'Valletta Till',
+        signingPublicKey: 'signing-key',
+        exchangePublicKey: 'exchange-key',
+        shopId: 'SHOP-2',
+      );
+      await client.approveLocalSyncEnrollment(
+        enrollmentId: 'ENROLL-1',
+        approverDeviceId: 'device-1',
+        encryptedKeyEnvelope: 'opaque-envelope',
+      );
+      await client.completeLocalSyncEnrollment(
+        enrollmentId: 'ENROLL-1',
+        deviceId: 'device-2',
+      );
+      await client.setPreferredLocalSyncDevice(deviceId: 'device-1');
+      await client.revokeLocalSyncDevice(
+        deviceId: 'device-2',
+        approvingDeviceId: 'device-1',
+        nextKeyEpoch: 2,
+        encryptedKeyEnvelopes: <String, String>{'device-1': 'rotated-envelope'},
+      );
+
+      expect(requests.map((http.Request request) => request.url.path), <String>[
+        '/api/method/neuradix.api.v1.local_sync.create_shop',
+        '/api/method/neuradix.api.v1.local_sync.assign_device_shop',
+        '/api/method/neuradix.api.v1.local_sync.start_enrollment',
+        '/api/method/neuradix.api.v1.local_sync.approve_enrollment',
+        '/api/method/neuradix.api.v1.local_sync.complete_enrollment',
+        '/api/method/neuradix.api.v1.local_sync.set_preferred_device',
+        '/api/method/neuradix.api.v1.local_sync.revoke_device',
+      ]);
+      for (final request in requests) {
+        expect(request.method, 'POST');
+        expect(request.bodyFields.containsKey('customer'), isFalse);
+        expect(request.bodyFields.containsKey('customers'), isFalse);
+        expect(request.bodyFields.containsKey('sale'), isFalse);
+        expect(request.bodyFields.containsKey('sales'), isFalse);
+        expect(request.bodyFields.containsKey('inventory'), isFalse);
+      }
+      expect(
+        jsonDecode(
+          requests.last.bodyFields['encrypted_key_envelopes']!,
+        )['device-1'],
+        'rotated-envelope',
+      );
     },
   );
 

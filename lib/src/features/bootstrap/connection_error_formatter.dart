@@ -1,7 +1,10 @@
+import 'package:flutter/foundation.dart';
+
 String formatConnectionError(
   Object error, {
   required String baseUrl,
   bool includePreviewHint = false,
+  TargetPlatform? platform,
 }) {
   final rawMessage = '$error'.trim();
   final message =
@@ -16,7 +19,9 @@ String formatConnectionError(
   final String aliasUrl = '$scheme://neuradix-cassar.localhost:$port';
 
   String formattedMessage = message;
-  if (_looksLikeSandboxNetworkFailure(message)) {
+  final effectivePlatform = platform ?? defaultTargetPlatform;
+  if (effectivePlatform == TargetPlatform.macOS &&
+      _looksLikeSandboxNetworkFailure(message)) {
     formattedMessage =
         'The macOS app is blocked from opening outbound network connections to '
         '$baseUrl. This usually means you are running an older macOS build '

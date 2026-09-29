@@ -1,11 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../data/local/hosted_local_repository.dart';
+import '../data/local/local_sync_repository.dart';
 import '../data/local/pos_cache_repository.dart';
 import '../data/local/neuradix_database.dart';
 import '../features/bootstrap/connection_error_formatter.dart';
@@ -14,6 +15,15 @@ import '../features/bootstrap/bootstrap_config_repository.dart';
 import '../features/bootstrap/runtime_bench_url.dart';
 import '../features/hosted/hosted_models.dart';
 import '../features/hosted/hosted_pos_support.dart';
+import '../features/local_sync/local_sync_coordinator.dart';
+import '../features/local_sync/local_sync_bootstrapper.dart';
+import '../features/local_sync/local_sync_crypto.dart';
+import '../features/local_sync/local_sync_ids.dart';
+import '../features/local_sync/local_sync_models.dart';
+import '../features/local_sync/local_sync_pairing.dart';
+import '../features/local_sync/local_sync_pairing_dialog.dart';
+import '../features/local_sync/local_sync_relay_worker.dart';
+import '../features/local_sync/local_sync_shop_dialog.dart';
 import '../features/orders/local_order_repository.dart';
 import '../features/pos/catalog_image_provider.dart';
 import '../features/pos/pos_debug_log.dart';
@@ -89,12 +99,24 @@ double posOrderCartPanelWidth(double maxWidth) {
 
 bool hostedSalesUsesCompactLayout(double maxWidth) => maxWidth < 920;
 
+bool hostedSalesUsesScrollableNonCompactPane({
+  required double maxWidth,
+  required double maxHeight,
+}) => !hostedSalesUsesCompactLayout(maxWidth) && maxHeight < 620;
+
+double hostedCompactBodyHeight(double maxHeight) {
+  return (maxHeight - 360).clamp(520.0, 1000.0).toDouble();
+}
+
 double hostedSalesCartPanelWidth(double maxWidth) {
   if (hostedSalesUsesCompactLayout(maxWidth)) {
     return double.infinity;
   }
   return maxWidth < 1280 ? 360.0 : 420.0;
 }
+
+String hostedShellStateScope(BootstrapConfig config) =>
+    '${config.businessId}:${config.shopId}';
 
 BootstrapConfig repairHostedCloudConfig(BootstrapConfig config) {
   if (config.deploymentMode != 'neuradix_cloud') {
@@ -132,9 +154,8 @@ enum _AppStage {
   hostedShell,
 }
 
-bool _isHostedCloudSyncPlan(String planType) {
-  return planType == 'free_cloud' || planType == 'paid_cloud';
-}
+bool _usesHostedBackendSync(BootstrapConfig config) =>
+    config.syncMode == 'hosted_backend';
 
 String _hostedPlanLabel(String planType) {
   switch (planType) {
@@ -146,6 +167,17 @@ String _hostedPlanLabel(String planType) {
     default:
       return 'Free Local';
   }
+}
+
+String _formatLocalSyncTimestamp(String? value) {
+  final parsed = DateTime.tryParse(value ?? '');
+  if (parsed == null) {
+    return 'Not yet';
+  }
+  final local = parsed.toLocal();
+  String twoDigits(int number) => number.toString().padLeft(2, '0');
+  return '${local.year}-${twoDigits(local.month)}-${twoDigits(local.day)} '
+      '${twoDigits(local.hour)}:${twoDigits(local.minute)}';
 }
 
 class NeuradixPosApp extends StatefulWidget {
@@ -271,12 +303,17 @@ class NeuradixLoginPreview extends StatelessWidget {
 
 class _NeuradixPosAppState extends State<NeuradixPosApp> {
   late final NeuradixDatabase _database;
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
 
   BootstrapConfig? _config;
   BootstrapConfigRepository? _bootstrapRepository;
   PosCacheRepository? _cacheRepository;
   HostedLocalRepository? _hostedRepository;
   LocalOrderRepository? _orderRepository;
+  LocalSyncRepository? _localSyncRepository;
+  LocalSyncCoordinator? _localSyncCoordinator;
+  LocalSyncBootstrapResult? _localSyncBootstrapResult;
+  String? _localSyncStatusMessage;
   PosBootstrapBundle _bootstrapBundle = PosPreviewData.bootstrap;
   PosHomeController? _controller;
   PosLoginSession? _session;
@@ -303,7 +340,7 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
     try {
       PosDebugLog.info('app.initialize', 'starting startup flow');
       final database = await _database.open().timeout(
-        const Duration(seconds: 15),
+        neuradixDatabaseOpenTimeout,
       );
       PosDebugLog.info(
         'app.initialize',
@@ -313,6 +350,7 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
       final cacheRepository = PosCacheRepository(database);
       final hostedRepository = HostedLocalRepository(database);
       final orderRepository = LocalOrderRepository(database);
+      final localSyncRepository = LocalSyncRepository(database);
       final storedConfig = await bootstrapRepository.read();
       final config =
           storedConfig == null ? null : repairHostedCloudConfig(storedConfig);
@@ -339,6 +377,7 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
         _cacheRepository = cacheRepository;
         _hostedRepository = hostedRepository;
         _orderRepository = orderRepository;
+        _localSyncRepository = localSyncRepository;
         _config = config;
         _session = session;
         _bootstrapBundle =
@@ -405,6 +444,36 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
         await restoredController.launchFlow();
         PosDebugLog.info('app.initialize', 'startup flow complete');
         return;
+      }
+
+      if (config != null &&
+          session != null &&
+          config.deploymentMode == 'neuradix_cloud') {
+        final localSyncResult = await _prepareLocalSync(
+          _config ?? config,
+          session,
+        );
+        final profile = localSyncResult?.profile;
+        final syncConfig =
+            profile == null
+                ? (_config ?? config)
+                : (_config ?? config).copyWith(
+                  relayUrl: profile.relayUrl,
+                  protocolVersion: profile.protocolVersion,
+                  shopId: profile.shopId,
+                  shopName: profile.shopName,
+                );
+        if (profile != null) {
+          await _bootstrapRepository!.save(syncConfig);
+        }
+        if (mounted) {
+          setState(() {
+            _config = syncConfig;
+            _localSyncCoordinator = localSyncResult?.coordinator;
+            _localSyncBootstrapResult = localSyncResult;
+            _localSyncStatusMessage = localSyncResult?.message;
+          });
+        }
       }
 
       if (!mounted) {
@@ -489,6 +558,10 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
       _cacheRepository = null;
       _hostedRepository = null;
       _orderRepository = null;
+      _localSyncRepository = null;
+      _localSyncCoordinator = null;
+      _localSyncBootstrapResult = null;
+      _localSyncStatusMessage = null;
       _config = null;
       _session = null;
       _bootstrapBundle = PosPreviewData.bootstrap;
@@ -532,6 +605,10 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
         brandName: liveBundle.brandName,
         supportEmail: liveBundle.supportEmail,
         defaultCloudBaseUrl: liveBundle.defaultCloudBaseUrl,
+        relayUrl: liveBundle.relayUrl,
+        protocolVersion: liveBundle.protocolVersion,
+        featureLocalMultiShopSync:
+            liveBundle.features['local_multi_shop_sync'] == true,
         themePrimary: liveBundle.theme.primary,
         themeSecondary: liveBundle.theme.secondary,
         themeAccent: liveBundle.theme.accent,
@@ -590,11 +667,12 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
     });
     await _bootstrapRepository!.save(config);
     await _refreshBootstrapTheme(config, silent: false);
+    final refreshedConfig = await _bootstrapRepository!.read() ?? config;
     if (!mounted) {
       return;
     }
     setState(() {
-      _config = config;
+      _config = refreshedConfig;
       _busy = false;
       _stage = _AppStage.login;
     });
@@ -640,11 +718,12 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
     );
     await _bootstrapRepository!.save(config);
     await _refreshBootstrapTheme(config, silent: true);
+    final refreshedConfig = await _bootstrapRepository!.read() ?? config;
     if (!mounted) {
       return;
     }
     setState(() {
-      _config = config;
+      _config = refreshedConfig;
       _stage = _AppStage.hostedAuth;
       _errorMessage = null;
     });
@@ -734,10 +813,13 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
 
   Future<void> _registerHostedBusiness({
     required String businessName,
+    required String shopName,
+    required String shopCode,
     required String fullName,
     required String email,
     required String password,
     required String planType,
+    required String syncMode,
   }) async {
     final config = _config;
     if (config == null) {
@@ -756,9 +838,16 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
       deviceId: config.deviceId,
       deviceName: config.deviceName,
       planType: planType,
+      syncMode: syncMode,
+      shopName: syncMode == 'local_multi_shop' ? shopName.trim() : '',
+      shopCode: syncMode == 'local_multi_shop' ? shopCode.trim() : '',
     );
     if (attempt.auth != null) {
-      await _completeHostedAuthentication(api, attempt.auth!);
+      try {
+        await _completeHostedAuthentication(api, attempt.auth!);
+      } on Exception catch (error) {
+        _showHostedAuthenticationError(error, config.baseUrl);
+      }
       return;
     }
     if (!mounted) {
@@ -794,7 +883,11 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
       deviceName: config.deviceName,
     );
     if (attempt.auth != null) {
-      await _completeHostedAuthentication(api, attempt.auth!);
+      try {
+        await _completeHostedAuthentication(api, attempt.auth!);
+      } on Exception catch (error) {
+        _showHostedAuthenticationError(error, config.baseUrl);
+      }
       return;
     }
     if (!mounted) {
@@ -813,9 +906,31 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
     NeuradixApiClient api,
     HostedAuthResult auth,
   ) async {
+    PosDebugLog.info(
+      'hosted.auth',
+      'preparing business=${auth.business.businessId}',
+    );
+    final businessSwitchError = await _hostedRepository!.prepareForBusiness(
+      auth.business.businessId,
+    );
+    if (businessSwitchError != null) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busy = false;
+        _errorMessage = businessSwitchError;
+      });
+      return;
+    }
+
     final session = PosLoginSession.fromJson(auth.sessionJson);
     final bootstrap = PosBootstrapBundle.fromPlatform(auth.bootstrapJson);
-    final updatedConfig = (_config ?? _emptyHostedConfig()).copyWith(
+    PosDebugLog.info(
+      'hosted.auth',
+      'business prepared sync_mode=${bootstrap.syncMode}',
+    );
+    var updatedConfig = (_config ?? _emptyHostedConfig()).copyWith(
       baseUrl: _config?.baseUrl ?? _defaultCloudBaseUrl,
       useSsl: (_config?.baseUrl ?? _defaultCloudBaseUrl).startsWith('https://'),
       deploymentMode: 'neuradix_cloud',
@@ -831,8 +946,38 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
       themeActive: bootstrap.theme.parkOrderButton,
       businessId: auth.business.businessId,
       businessName: auth.business.businessName,
+      syncMode: bootstrap.syncMode,
+      relayUrl: bootstrap.relayUrl,
+      protocolVersion: bootstrap.protocolVersion,
+      metadataOnly: bootstrap.metadataOnly,
+      featureLocalMultiShopSync:
+          bootstrap.features['local_multi_shop_sync'] == true,
     );
 
+    updatedConfig = await _selectLocalSyncShopForEnrollment(updatedConfig, api);
+    PosDebugLog.info(
+      'hosted.auth',
+      'shop selected shop=${updatedConfig.shopId}',
+    );
+
+    final localSyncResult = await _prepareLocalSync(
+      updatedConfig,
+      session,
+      api: api,
+    );
+    PosDebugLog.info(
+      'hosted.auth',
+      'local sync prepared status=${localSyncResult?.status ?? 'not_required'}',
+    );
+    final localSyncProfile = localSyncResult?.profile;
+    if (localSyncProfile != null) {
+      updatedConfig = updatedConfig.copyWith(
+        relayUrl: localSyncProfile.relayUrl,
+        protocolVersion: localSyncProfile.protocolVersion,
+        shopId: localSyncProfile.shopId,
+        shopName: localSyncProfile.shopName,
+      );
+    }
     await _bootstrapRepository!.save(updatedConfig);
     await _cacheRepository!.saveSession(session);
     await _hostedRepository!.saveBusinessProfile(
@@ -841,6 +986,7 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
         subscriptionStatus: auth.subscriptionStatus,
       ),
     );
+    PosDebugLog.info('hosted.auth', 'configuration and session saved');
 
     if (!mounted) {
       return;
@@ -849,9 +995,343 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
       _config = updatedConfig;
       _bootstrapBundle = bootstrap;
       _session = session;
+      _localSyncCoordinator = localSyncResult?.coordinator;
+      _localSyncBootstrapResult = localSyncResult;
+      _localSyncStatusMessage = localSyncResult?.message;
       _busy = false;
       _stage = _AppStage.hostedShell;
     });
+  }
+
+  void _showHostedAuthenticationError(Object error, String baseUrl) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _busy = false;
+      _errorMessage = formatConnectionError(error, baseUrl: baseUrl);
+    });
+  }
+
+  Future<BootstrapConfig> _selectLocalSyncShopForEnrollment(
+    BootstrapConfig config,
+    NeuradixApiClient api,
+  ) async {
+    if (config.syncMode != 'local_multi_shop' ||
+        !config.featureLocalMultiShopSync) {
+      return config;
+    }
+    PosDebugLog.info('hosted.auth', 'loading local sync metadata');
+    final metadata = LocalSyncMetadata.fromJson(
+      await api.getLocalSyncMetadata(),
+    );
+    PosDebugLog.info(
+      'hosted.auth',
+      'metadata loaded shops=${metadata.activeShops.length} '
+          'devices=${metadata.devices.length}',
+    );
+    if (metadata.businessId.isNotEmpty &&
+        metadata.businessId != config.businessId) {
+      throw StateError('The shop metadata belongs to another business.');
+    }
+    final currentDevice = metadata.device(config.deviceId);
+    if (currentDevice != null && currentDevice.isActive) {
+      return config.copyWith(
+        shopId: currentDevice.shopId,
+        shopName: currentDevice.shopName,
+      );
+    }
+    final shops = metadata.activeShops;
+    if (shops.isEmpty) {
+      throw StateError('No active shop is available for this business.');
+    }
+    if (!metadata.requiresShopSelectionFor(config.deviceId)) {
+      final shop = shops.first;
+      return config.copyWith(shopId: shop.shopId, shopName: shop.shopName);
+    }
+    if (!mounted) {
+      throw StateError('Select a shop before enrolling this register.');
+    }
+    final dialogContext = _navigatorKey.currentContext;
+    if (dialogContext == null || !dialogContext.mounted) {
+      throw StateError('The shop selector is not ready. Retry login.');
+    }
+    final selected = await showSelectLocalSyncShopDialog(dialogContext, shops);
+    if (selected == null) {
+      throw StateError(
+        'Select the register shop before starting trusted-device pairing.',
+      );
+    }
+    return config.copyWith(
+      shopId: selected.shopId,
+      shopName: selected.shopName,
+    );
+  }
+
+  Future<LocalSyncBootstrapResult?> _prepareLocalSync(
+    BootstrapConfig config,
+    PosLoginSession session, {
+    NeuradixApiClient? api,
+  }) async {
+    if (config.syncMode != 'local_multi_shop' ||
+        !config.featureLocalMultiShopSync) {
+      return null;
+    }
+    final repository = _localSyncRepository;
+    if (repository == null || config.businessId.isEmpty) {
+      return const LocalSyncBootstrapResult(
+        status: 'unavailable',
+        message: 'Local multi-shop storage is not ready on this device.',
+      );
+    }
+    final client =
+        api ??
+        NeuradixApiClient(
+          baseUrl: config.baseUrl,
+          apiKey: session.apiKey,
+          apiSecret: session.apiSecret,
+        );
+    final bootstrapper = LocalSyncBootstrapper(
+      repository: repository,
+      keyManager: LocalSyncKeyManager(
+        secureStore: FlutterLocalSyncSecureStore(),
+      ),
+      fetchMetadata: client.getLocalSyncMetadata,
+      registerFirstDevice:
+          (LocalSyncDeviceKeys keys) => client.registerFirstLocalSyncDevice(
+            deviceId: config.deviceId,
+            deviceName: config.deviceName,
+            signingPublicKey: keys.signingPublicKeyBase64,
+            exchangePublicKey: keys.exchangePublicKeyBase64,
+            shopId: config.shopId,
+            shopName: config.shopName,
+          ),
+      startEnrollment:
+          (LocalSyncEnrollmentKeys keys) => client.startLocalSyncEnrollment(
+            deviceId: config.deviceId,
+            deviceName: config.deviceName,
+            signingPublicKey: keys.signingPublicKeyBase64,
+            exchangePublicKey: keys.exchangePublicKeyBase64,
+            shopId: config.shopId,
+          ),
+    );
+    try {
+      final previousProfile = await repository.readProfile();
+      final result = await bootstrapper.bootstrap(
+        businessId: config.businessId,
+        deviceId: config.deviceId,
+        deviceName: config.deviceName,
+        fallbackRelayUrl: config.relayUrl,
+        fallbackProtocolVersion: config.protocolVersion,
+      );
+      final currentProfile = result.profile;
+      if (previousProfile != null &&
+          currentProfile != null &&
+          previousProfile.shopId != currentProfile.shopId) {
+        await _hostedRepository?.clearInventoryItems();
+      }
+      return result;
+    } on Exception catch (error) {
+      return LocalSyncBootstrapResult(
+        status: 'unavailable',
+        message: 'Local multi-shop setup is unavailable: $error',
+      );
+    }
+  }
+
+  Future<String> _approveLocalSyncPairing(String pairingCode) async {
+    final config = _config;
+    final session = _session;
+    final coordinator = _localSyncCoordinator;
+    if (config == null || session == null || coordinator == null) {
+      throw StateError('This register is not an active trusted device.');
+    }
+    final payload = decodeLocalSyncPairingCode(pairingCode);
+    if ('${payload['business_id']}' != config.businessId) {
+      throw const FormatException(
+        'The pairing code belongs to another business.',
+      );
+    }
+    final enrollmentId = '${payload['enrollment_id']}';
+    final targetDeviceId = '${payload['device_id']}';
+    final encryptedEnvelope = await LocalSyncCrypto()
+        .wrapBusinessKeyForEnrollment(
+          approverKeys: coordinator.keys,
+          businessId: config.businessId,
+          enrollmentId: enrollmentId,
+          targetDeviceId: targetDeviceId,
+          targetExchangePublicKey: base64Decode(
+            '${payload['exchange_public_key']}',
+          ),
+        );
+    final api = NeuradixApiClient(
+      baseUrl: config.baseUrl,
+      apiKey: session.apiKey,
+      apiSecret: session.apiSecret,
+    );
+    await api.approveLocalSyncEnrollment(
+      enrollmentId: enrollmentId,
+      approverDeviceId: config.deviceId,
+      encryptedKeyEnvelope: encryptedEnvelope,
+    );
+    return 'Register ${payload['device_name'] ?? targetDeviceId} approved.';
+  }
+
+  Future<String> _completeLocalSyncPairing() async {
+    final config = _config;
+    final session = _session;
+    final enrollment = _localSyncBootstrapResult;
+    if (config == null || session == null || enrollment == null) {
+      throw StateError('There is no pending device enrollment.');
+    }
+    if (enrollment.enrollmentId.isEmpty) {
+      throw StateError('The pending enrollment ID is missing.');
+    }
+    final api = NeuradixApiClient(
+      baseUrl: config.baseUrl,
+      apiKey: session.apiKey,
+      apiSecret: session.apiSecret,
+    );
+    final completed = await api.completeLocalSyncEnrollment(
+      enrollmentId: enrollment.enrollmentId,
+      deviceId: config.deviceId,
+    );
+    final keyManager = LocalSyncKeyManager(
+      secureStore: FlutterLocalSyncSecureStore(),
+    );
+    final pendingKeys = await keyManager.loadEnrollmentKeys(
+      businessId: config.businessId,
+      deviceId: config.deviceId,
+    );
+    if (pendingKeys == null) {
+      throw StateError('The pending device keys are unavailable.');
+    }
+    final unwrapped = await LocalSyncCrypto().unwrapBusinessKeyFromEnrollment(
+      enrollmentKeys: pendingKeys,
+      encryptedEnvelope: '${completed['encrypted_key_envelope'] ?? ''}',
+      businessId: config.businessId,
+      enrollmentId: enrollment.enrollmentId,
+      targetDeviceId: config.deviceId,
+    );
+    await keyManager.completeEnrollment(
+      businessId: config.businessId,
+      deviceId: config.deviceId,
+      keyEpoch: unwrapped.keyEpoch,
+      businessKey: unwrapped.businessKey,
+    );
+    final localSyncResult = await _prepareLocalSync(config, session, api: api);
+    final profile = localSyncResult?.profile;
+    final updatedConfig =
+        profile == null
+            ? config
+            : config.copyWith(
+              relayUrl: profile.relayUrl,
+              protocolVersion: profile.protocolVersion,
+              shopId: profile.shopId,
+              shopName: profile.shopName,
+            );
+    await _bootstrapRepository!.save(updatedConfig);
+    if (!mounted) {
+      return 'Register paired.';
+    }
+    setState(() {
+      _config = updatedConfig;
+      _localSyncCoordinator = localSyncResult?.coordinator;
+      _localSyncBootstrapResult = localSyncResult;
+      _localSyncStatusMessage = localSyncResult?.message;
+    });
+    return 'Register paired and local multi-shop sync is active.';
+  }
+
+  Future<String?> _localSyncShopReassignmentBlockReason(
+    int activeCartLines,
+  ) async {
+    final repository = _localSyncRepository;
+    if (repository == null) {
+      return 'This register is not ready for shop reassignment.';
+    }
+    final pendingEvents = await repository.pendingEventCount();
+    final parkedOrders = await _orderRepository?.parkedOrderCount() ?? 0;
+    final queuedOrders = await _orderRepository?.queuedOrderCount() ?? 0;
+    return localSyncShopReassignmentBlockReason(
+      pendingEvents: pendingEvents,
+      parkedOrders: parkedOrders,
+      queuedOrders: queuedOrders,
+      activeCartLines: activeCartLines,
+    );
+  }
+
+  Future<String> _reassignCurrentLocalSyncShop(
+    LocalSyncShop targetShop,
+    int activeCartLines,
+  ) async {
+    final config = _config;
+    final session = _session;
+    final repository = _localSyncRepository;
+    final hostedRepository = _hostedRepository;
+    if (config == null ||
+        session == null ||
+        repository == null ||
+        hostedRepository == null ||
+        _localSyncCoordinator == null) {
+      throw StateError('This register is not ready for shop reassignment.');
+    }
+    if (targetShop.shopId == config.shopId) {
+      return 'This register is already assigned to ${targetShop.shopName}.';
+    }
+    final blockedReason = await _localSyncShopReassignmentBlockReason(
+      activeCartLines,
+    );
+    if (blockedReason != null) {
+      throw StateError(blockedReason);
+    }
+
+    final api = NeuradixApiClient(
+      baseUrl: config.baseUrl,
+      apiKey: session.apiKey,
+      apiSecret: session.apiSecret,
+    );
+    await api.assignLocalSyncDeviceShop(
+      deviceId: config.deviceId,
+      shopId: targetShop.shopId,
+    );
+    await hostedRepository.clearInventoryItems();
+    final previousProfile = _localSyncCoordinator!.profile;
+    await repository.saveProfile(
+      LocalSyncProfile(
+        businessId: previousProfile.businessId,
+        shopId: targetShop.shopId,
+        shopName: targetShop.shopName,
+        deviceId: previousProfile.deviceId,
+        deviceName: previousProfile.deviceName,
+        relayUrl: previousProfile.relayUrl,
+        protocolVersion: previousProfile.protocolVersion,
+        keyEpoch: previousProfile.keyEpoch,
+        isPreferredPeer: previousProfile.isPreferredPeer,
+      ),
+    );
+    final targetConfig = config.copyWith(
+      shopId: targetShop.shopId,
+      shopName: targetShop.shopName,
+    );
+    final result = await _prepareLocalSync(targetConfig, session, api: api);
+    final profile = result?.profile;
+    final updatedConfig = targetConfig.copyWith(
+      relayUrl: profile?.relayUrl ?? targetConfig.relayUrl,
+      protocolVersion: profile?.protocolVersion ?? targetConfig.protocolVersion,
+      shopId: profile?.shopId ?? targetShop.shopId,
+      shopName: profile?.shopName ?? targetShop.shopName,
+    );
+    await _bootstrapRepository!.save(updatedConfig);
+    if (mounted) {
+      setState(() {
+        _config = updatedConfig;
+        _localSyncCoordinator = result?.coordinator;
+        _localSyncBootstrapResult = result;
+        _localSyncStatusMessage = result?.message;
+      });
+    }
+    return 'Register moved to ${targetShop.shopName}; shop-local inventory was cleared.';
   }
 
   Future<void> _upgradeHostedPlan() async {
@@ -874,30 +1354,32 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
         apiSecret: session.apiSecret,
       );
       final upgradedProfile = await api.startUpgrade();
-      final inventory = await _hostedRepository!.listInventoryItems();
-      final customers = await _hostedRepository!.listCustomers();
-      final sales = await _hostedRepository!.listSales();
-      final batchPayload = <String, Object?>{
-        'inventory_items': inventory
-            .map((HostedInventoryItem item) => item.toApiPayload())
-            .toList(growable: false),
-        'customers': customers
-            .map((HostedCustomer customer) => customer.toJson())
-            .toList(growable: false),
-        'sales': sales
-            .map((HostedSaleRecord sale) => sale.toApiPayload())
-            .toList(growable: false),
-      };
-      final batchId = 'upgrade-${DateTime.now().millisecondsSinceEpoch}';
-      await _hostedRepository!.saveUpgradeBatch(
-        batchId: batchId,
-        status: 'submitted',
-        payload: batchPayload,
-      );
-      await api.importLocalBusinessData(
-        batchPayload,
-        deviceId: config.deviceId,
-      );
+      if (upgradedProfile.syncMode == 'hosted_backend') {
+        final inventory = await _hostedRepository!.listInventoryItems();
+        final customers = await _hostedRepository!.listCustomers();
+        final sales = await _hostedRepository!.listSales();
+        final batchPayload = <String, Object?>{
+          'inventory_items': inventory
+              .map((HostedInventoryItem item) => item.toApiPayload())
+              .toList(growable: false),
+          'customers': customers
+              .map((HostedCustomer customer) => customer.toJson())
+              .toList(growable: false),
+          'sales': sales
+              .map((HostedSaleRecord sale) => sale.toApiPayload())
+              .toList(growable: false),
+        };
+        final batchId = 'upgrade-${DateTime.now().millisecondsSinceEpoch}';
+        await _hostedRepository!.saveUpgradeBatch(
+          batchId: batchId,
+          status: 'submitted',
+          payload: batchPayload,
+        );
+        await api.importLocalBusinessData(
+          batchPayload,
+          deviceId: config.deviceId,
+        );
+      }
       final profile = await _hostedRepository!.readBusinessProfile();
       if (profile != null) {
         await _hostedRepository!.saveBusinessProfile(
@@ -906,10 +1388,22 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
             subscriptionStatus: upgradedProfile.subscriptionStatus,
             planCaps: upgradedProfile.planCaps,
             features: upgradedProfile.features,
+            syncMode: upgradedProfile.syncMode,
+            metadataOnly: upgradedProfile.metadataOnly,
+            relayUrl: upgradedProfile.relayUrl,
+            protocolVersion: upgradedProfile.protocolVersion,
           ),
         );
       }
-      final updatedConfig = config.copyWith(planType: upgradedProfile.planType);
+      final updatedConfig = config.copyWith(
+        planType: upgradedProfile.planType,
+        syncMode: upgradedProfile.syncMode,
+        metadataOnly: upgradedProfile.metadataOnly,
+        relayUrl: upgradedProfile.relayUrl,
+        protocolVersion: upgradedProfile.protocolVersion,
+        featureLocalMultiShopSync:
+            upgradedProfile.features['local_multi_shop_sync'] == true,
+      );
       await _bootstrapRepository!.save(updatedConfig);
       if (!mounted) {
         return;
@@ -974,6 +1468,9 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
       }
       setState(() {
         _session = null;
+        _localSyncCoordinator = null;
+        _localSyncBootstrapResult = null;
+        _localSyncStatusMessage = null;
         _stage = _AppStage.hostedAuth;
         _errorMessage = null;
       });
@@ -1100,7 +1597,7 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
     }
   }
 
-  Future<void> _showPrivacyTerms(BuildContext context) async {
+  Future<void> _showPrivacyTerms() async {
     final config = _config;
     if (config == null) {
       return;
@@ -1112,11 +1609,12 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
     try {
       final api = NeuradixApiClient(baseUrl: config.baseUrl);
       final payload = await api.getPrivacyTerms();
-      if (!context.mounted) {
+      final dialogContext = _navigatorKey.currentContext;
+      if (dialogContext == null || !dialogContext.mounted) {
         return;
       }
       await showDialog<void>(
-        context: context,
+        context: dialogContext,
         builder: (BuildContext dialogContext) {
           return AlertDialog(
             title: const Text('Privacy Policy & Terms'),
@@ -1211,6 +1709,7 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
     );
 
     return MaterialApp(
+      navigatorKey: _navigatorKey,
       debugShowCheckedModeBanner: false,
       title: 'Neuradix POS',
       theme: NeuradixTheme.light(palette: themePalette),
@@ -1267,7 +1766,7 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
           onPreview: _enterPreviewMode,
           onEditInstance: _editInstance,
           onForgotPassword: _forgotPassword,
-          onShowPrivacyTerms: () => _showPrivacyTerms(context),
+          onShowPrivacyTerms: _showPrivacyTerms,
         );
       case _AppStage.hostedAuth:
         return _HostedAuthView(
@@ -1276,6 +1775,9 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
               _config?.defaultCloudBaseUrl ??
               _defaultCloudBaseUrl,
           brandName: _config?.brandName ?? 'Neuradix POS',
+          localMultiShopAvailable:
+              _config?.featureLocalMultiShopSync == true ||
+              _bootstrapBundle.features['local_multi_shop_sync'] == true,
           busy: _busy,
           errorMessage: _errorMessage,
           onRegister: _registerHostedBusiness,
@@ -1300,6 +1802,7 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
         );
       case _AppStage.hostedShell:
         return _HostedShellView(
+          key: ValueKey<String>(hostedShellStateScope(_config!)),
           config: _config!,
           bootstrap: _bootstrapBundle,
           session: _session!,
@@ -1307,6 +1810,13 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
           onLogout: _logout,
           onEditMode: _editInstance,
           onUpgrade: _upgradeHostedPlan,
+          localSyncCoordinator: _localSyncCoordinator,
+          localSyncBootstrapResult: _localSyncBootstrapResult,
+          localSyncStatusMessage: _localSyncStatusMessage,
+          onApprovePairing: _approveLocalSyncPairing,
+          onCompletePairing: _completeLocalSyncPairing,
+          onCheckShopReassignment: _localSyncShopReassignmentBlockReason,
+          onReassignCurrentShop: _reassignCurrentLocalSyncShop,
         );
     }
   }
@@ -1321,6 +1831,10 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
       appName: 'neuradix-pos',
       deploymentMode: config.deploymentMode,
       planType: config.planType,
+      syncMode: config.syncMode,
+      relayUrl: config.relayUrl,
+      protocolVersion: config.protocolVersion,
+      metadataOnly: config.metadataOnly,
       defaultCloudBaseUrl: config.defaultCloudBaseUrl,
       priceList: 'Standard Selling',
       offlineHistoryDays: 14,
@@ -1347,7 +1861,8 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
             config.deploymentMode == 'neuradix_cloud'
                 ? config.planType
                 : 'external_backend',
-        'sync_enabled': _isHostedCloudSyncPlan(config.planType),
+        'sync_mode': config.syncMode,
+        'sync_enabled': _usesHostedBackendSync(config),
       },
     );
   }
@@ -1845,10 +2360,43 @@ class _ModeCard extends StatelessWidget {
   }
 }
 
+class NeuradixHostedAuthPreview extends StatelessWidget {
+  const NeuradixHostedAuthPreview({
+    super.key,
+    this.localMultiShopAvailable = true,
+  });
+
+  final bool localMultiShopAvailable;
+
+  @override
+  Widget build(BuildContext context) {
+    return _HostedAuthView(
+      cloudBaseUrl: neuradixDefaultCloudBaseUrlFallback,
+      brandName: 'Neuradix POS',
+      localMultiShopAvailable: localMultiShopAvailable,
+      busy: false,
+      onRegister:
+          ({
+            required String businessName,
+            required String shopName,
+            required String shopCode,
+            required String fullName,
+            required String email,
+            required String password,
+            required String planType,
+            required String syncMode,
+          }) async {},
+      onLogin: ({required String email, required String password}) async {},
+      onBack: () async {},
+    );
+  }
+}
+
 class _HostedAuthView extends StatefulWidget {
   const _HostedAuthView({
     required this.cloudBaseUrl,
     required this.brandName,
+    required this.localMultiShopAvailable,
     required this.busy,
     required this.onRegister,
     required this.onLogin,
@@ -1858,14 +2406,18 @@ class _HostedAuthView extends StatefulWidget {
 
   final String cloudBaseUrl;
   final String brandName;
+  final bool localMultiShopAvailable;
   final bool busy;
   final String? errorMessage;
   final Future<void> Function({
     required String businessName,
+    required String shopName,
+    required String shopCode,
     required String fullName,
     required String email,
     required String password,
     required String planType,
+    required String syncMode,
   })
   onRegister;
   final Future<void> Function({required String email, required String password})
@@ -1879,7 +2431,10 @@ class _HostedAuthView extends StatefulWidget {
 class _HostedAuthViewState extends State<_HostedAuthView> {
   bool _registerMode = true;
   String _selectedPlanType = 'free_local';
+  String _selectedSyncMode = 'device_local';
   final TextEditingController _businessController = TextEditingController();
+  final TextEditingController _shopNameController = TextEditingController();
+  final TextEditingController _shopCodeController = TextEditingController();
   final TextEditingController _fullNameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
@@ -1887,6 +2442,8 @@ class _HostedAuthViewState extends State<_HostedAuthView> {
   @override
   void dispose() {
     _businessController.dispose();
+    _shopNameController.dispose();
+    _shopCodeController.dispose();
     _fullNameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
@@ -1913,7 +2470,7 @@ class _HostedAuthViewState extends State<_HostedAuthView> {
                   const SizedBox(height: 12),
                   Text(
                     _registerMode
-                        ? 'Create a Neuradix cloud business. Free Local keeps operational data on this device. Free Cloud syncs inventory, customers, and sales to the shared Neuradix backend with starter limits.'
+                        ? 'Create a Neuradix business. Free Local keeps operational data on one device. Local Multi-Shop shares customers and finalized sales directly between trusted devices without permanent cloud payload storage. Free Cloud stores and syncs operational data on the shared Neuradix backend.'
                         : 'Sign in to your Neuradix cloud business.',
                     style: Theme.of(context).textTheme.bodyLarge,
                   ),
@@ -1949,28 +2506,58 @@ class _HostedAuthViewState extends State<_HostedAuthView> {
                       children: <Widget>[
                         ChoiceChip(
                           label: const Text('Free Local'),
-                          selected: _selectedPlanType == 'free_local',
+                          selected:
+                              _selectedPlanType == 'free_local' &&
+                              _selectedSyncMode == 'device_local',
                           onSelected:
                               widget.busy
                                   ? null
-                                  : (_) => setState(
-                                    () => _selectedPlanType = 'free_local',
-                                  ),
+                                  : (_) => setState(() {
+                                    _selectedPlanType = 'free_local';
+                                    _selectedSyncMode = 'device_local';
+                                  }),
+                        ),
+                        ChoiceChip(
+                          label: Text(
+                            widget.localMultiShopAvailable
+                                ? 'Local Multi-Shop'
+                                : 'Local Multi-Shop (Unavailable)',
+                          ),
+                          selected: _selectedSyncMode == 'local_multi_shop',
+                          onSelected:
+                              widget.busy || !widget.localMultiShopAvailable
+                                  ? null
+                                  : (_) => setState(() {
+                                    _selectedPlanType = 'free_local';
+                                    _selectedSyncMode = 'local_multi_shop';
+                                  }),
                         ),
                         ChoiceChip(
                           label: const Text('Free Cloud'),
-                          selected: _selectedPlanType == 'free_cloud',
+                          selected:
+                              _selectedPlanType == 'free_cloud' &&
+                              _selectedSyncMode == 'hosted_backend',
                           onSelected:
                               widget.busy
                                   ? null
-                                  : (_) => setState(
-                                    () => _selectedPlanType = 'free_cloud',
-                                  ),
+                                  : (_) => setState(() {
+                                    _selectedPlanType = 'free_cloud';
+                                    _selectedSyncMode = 'hosted_backend';
+                                  }),
                         ),
                       ],
                     ),
+                    if (_selectedSyncMode == 'local_multi_shop') ...<Widget>[
+                      const SizedBox(height: 12),
+                      const _InlineMessage(
+                        message:
+                            'Customers and finalized sales stay on trusted devices. Devices must be online at the same time to exchange encrypted changes; inventory, stock, drafts, and parked carts remain shop-local.',
+                        backgroundColor: Color(0xFFEAF2F0),
+                      ),
+                    ],
                     const SizedBox(height: 12),
                     TextField(
+                      key: const Key('hosted-business-name'),
                       controller: _businessController,
                       enabled: !widget.busy,
                       decoration: const InputDecoration(
@@ -1978,7 +2565,31 @@ class _HostedAuthViewState extends State<_HostedAuthView> {
                       ),
                     ),
                     const SizedBox(height: 12),
+                    if (_selectedSyncMode == 'local_multi_shop') ...<Widget>[
+                      TextField(
+                        key: const Key('local-sync-first-shop-name'),
+                        controller: _shopNameController,
+                        enabled: !widget.busy,
+                        decoration: const InputDecoration(
+                          labelText: 'First Shop Name',
+                          hintText: 'For example, Valletta',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        key: const Key('local-sync-first-shop-code'),
+                        controller: _shopCodeController,
+                        enabled: !widget.busy,
+                        textCapitalization: TextCapitalization.characters,
+                        decoration: const InputDecoration(
+                          labelText: 'First Shop Code',
+                          hintText: 'For example, VALLETTA',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                     TextField(
+                      key: const Key('hosted-owner-full-name'),
                       controller: _fullNameController,
                       enabled: !widget.busy,
                       decoration: const InputDecoration(
@@ -1988,12 +2599,14 @@ class _HostedAuthViewState extends State<_HostedAuthView> {
                     const SizedBox(height: 12),
                   ],
                   TextField(
+                    key: const Key('hosted-auth-email'),
                     controller: _emailController,
                     enabled: !widget.busy,
                     decoration: const InputDecoration(labelText: 'Email'),
                   ),
                   const SizedBox(height: 12),
                   TextField(
+                    key: const Key('hosted-auth-password'),
                     controller: _passwordController,
                     enabled: !widget.busy,
                     obscureText: true,
@@ -2013,6 +2626,7 @@ class _HostedAuthViewState extends State<_HostedAuthView> {
                     runSpacing: 12,
                     children: <Widget>[
                       ElevatedButton(
+                        key: const Key('hosted-auth-submit'),
                         onPressed:
                             widget.busy
                                 ? null
@@ -2020,10 +2634,13 @@ class _HostedAuthViewState extends State<_HostedAuthView> {
                                   if (_registerMode) {
                                     await widget.onRegister(
                                       businessName: _businessController.text,
+                                      shopName: _shopNameController.text,
+                                      shopCode: _shopCodeController.text,
                                       fullName: _fullNameController.text,
                                       email: _emailController.text,
                                       password: _passwordController.text,
                                       planType: _selectedPlanType,
+                                      syncMode: _selectedSyncMode,
                                     );
                                   } else {
                                     await widget.onLogin(
@@ -2054,6 +2671,7 @@ class _HostedAuthViewState extends State<_HostedAuthView> {
 
 class _HostedShellView extends StatefulWidget {
   const _HostedShellView({
+    super.key,
     required this.config,
     required this.bootstrap,
     required this.session,
@@ -2061,6 +2679,13 @@ class _HostedShellView extends StatefulWidget {
     required this.onLogout,
     required this.onEditMode,
     required this.onUpgrade,
+    required this.localSyncCoordinator,
+    required this.localSyncBootstrapResult,
+    required this.localSyncStatusMessage,
+    required this.onApprovePairing,
+    required this.onCompletePairing,
+    required this.onCheckShopReassignment,
+    required this.onReassignCurrentShop,
   });
 
   final BootstrapConfig config;
@@ -2070,6 +2695,14 @@ class _HostedShellView extends StatefulWidget {
   final Future<void> Function() onLogout;
   final Future<void> Function() onEditMode;
   final Future<void> Function() onUpgrade;
+  final LocalSyncCoordinator? localSyncCoordinator;
+  final LocalSyncBootstrapResult? localSyncBootstrapResult;
+  final String? localSyncStatusMessage;
+  final Future<String> Function(String pairingCode) onApprovePairing;
+  final Future<String> Function() onCompletePairing;
+  final Future<String?> Function(int activeCartLines) onCheckShopReassignment;
+  final Future<String> Function(LocalSyncShop shop, int activeCartLines)
+  onReassignCurrentShop;
 
   @override
   State<_HostedShellView> createState() => _HostedShellViewState();
@@ -2111,6 +2744,9 @@ class _HostedShellViewState extends State<_HostedShellView> {
   late final TextEditingController _customerSearchController;
   late final TextEditingController _inventorySearchController;
   late final FocusNode _customerSearchFocusNode;
+  LocalSyncRelayWorker? _relayWorker;
+  LocalSyncRelayStatus _relayStatus = LocalSyncRelayStatus.stopped;
+  Timer? _localSyncDiagnosticsTimer;
 
   HostedBusinessProfile? _profile;
   List<HostedInventoryItem> _inventory = const <HostedInventoryItem>[];
@@ -2122,6 +2758,9 @@ class _HostedShellViewState extends State<_HostedShellView> {
   bool _busy = false;
   bool _offline = false;
   String? _statusMessage;
+  LocalSyncMetadata? _localSyncMetadata;
+  int _pendingSyncEvents = 0;
+  String? _lastSuccessfulSyncAt;
 
   HostedCustomer? get _selectedCustomer {
     final customerId = _selectedCustomerId;
@@ -2172,7 +2811,21 @@ class _HostedShellViewState extends State<_HostedShellView> {
     _customerSearchFocusNode =
         FocusNode()..addListener(_handleCustomerSearchFocusChange);
     _inventorySearchController.addListener(_handleInventorySearchChange);
-    _hydrate();
+    unawaited(_initializeHostedShell());
+    if (widget.config.syncMode == 'local_multi_shop') {
+      _localSyncDiagnosticsTimer = Timer.periodic(
+        const Duration(seconds: 3),
+        (_) => unawaited(_refreshLocalSyncDiagnostics()),
+      );
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _HostedShellView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.localSyncCoordinator != widget.localSyncCoordinator) {
+      unawaited(_configureLocalSyncWorker());
+    }
   }
 
   @override
@@ -2184,7 +2837,108 @@ class _HostedShellViewState extends State<_HostedShellView> {
     _inventorySearchController
       ..removeListener(_handleInventorySearchChange)
       ..dispose();
+    _localSyncDiagnosticsTimer?.cancel();
+    unawaited(_relayWorker?.stop());
     super.dispose();
+  }
+
+  Future<void> _initializeHostedShell() async {
+    await _hydrate();
+    await _refreshLocalSyncDiagnostics(includeMetadata: true);
+    await _configureLocalSyncWorker();
+  }
+
+  Future<void> _refreshLocalSyncDiagnostics({
+    bool includeMetadata = false,
+  }) async {
+    if (widget.config.syncMode != 'local_multi_shop') {
+      return;
+    }
+    final repository = widget.localSyncCoordinator?.repository;
+    try {
+      final pending = await repository?.pendingEventCount() ?? 0;
+      final lastSuccessful = await repository?.lastSuccessfulSyncAt();
+      LocalSyncMetadata? metadata;
+      if (includeMetadata || _localSyncMetadata == null) {
+        metadata = LocalSyncMetadata.fromJson(
+          await _apiClient.getLocalSyncMetadata(),
+        );
+      }
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _pendingSyncEvents = pending;
+        _lastSuccessfulSyncAt = lastSuccessful;
+        if (metadata != null) {
+          _localSyncMetadata = metadata;
+        }
+      });
+    } on Exception {
+      if (!mounted || repository == null) {
+        return;
+      }
+      final pending = await repository.pendingEventCount();
+      final lastSuccessful = await repository.lastSuccessfulSyncAt();
+      if (mounted) {
+        setState(() {
+          _pendingSyncEvents = pending;
+          _lastSuccessfulSyncAt = lastSuccessful;
+        });
+      }
+    }
+  }
+
+  Future<void> _configureLocalSyncWorker() async {
+    await _relayWorker?.stop();
+    _relayWorker = null;
+    final coordinator = widget.localSyncCoordinator;
+    if (coordinator == null) {
+      if (mounted) {
+        setState(() {
+          _relayStatus = LocalSyncRelayStatus.stopped;
+        });
+      }
+      return;
+    }
+    final worker = LocalSyncRelayWorker(
+      coordinator: coordinator,
+      issueToken:
+          () => _apiClient.issueLocalSyncRelayToken(
+            deviceId: widget.config.deviceId,
+          ),
+      refreshMetadata: _apiClient.getLocalSyncMetadata,
+      onDataChanged: _reloadLocalSyncData,
+      onStatusChanged: (LocalSyncRelayStatus status, String message) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _relayStatus = status;
+          _offline = status == LocalSyncRelayStatus.offline;
+          _statusMessage = message;
+        });
+        unawaited(_refreshLocalSyncDiagnostics());
+      },
+    );
+    _relayWorker = worker;
+    await worker.start();
+  }
+
+  Future<void> _reloadLocalSyncData() async {
+    final inventory = await widget.hostedRepository.listInventoryItems();
+    final customers = await widget.hostedRepository.listCustomers();
+    final sales = await widget.hostedRepository.listSales();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _inventory = inventory;
+      _customers = customers;
+      _sales = sales;
+      _ensureSelectedCustomer(customers);
+    });
+    await _refreshLocalSyncDiagnostics();
   }
 
   void _handleCustomerSearchFocusChange() {
@@ -2249,6 +3003,14 @@ class _HostedShellViewState extends State<_HostedShellView> {
     _customerSearchFocusNode.unfocus();
   }
 
+  void _clearCustomerSelection() {
+    setState(() {
+      _selectedCustomerId = null;
+      _customerSearchController.clear();
+    });
+    _customerSearchFocusNode.requestFocus();
+  }
+
   Future<void> _hydrate() async {
     setState(() {
       _busy = true;
@@ -2268,17 +3030,54 @@ class _HostedShellViewState extends State<_HostedShellView> {
       _ensureSelectedCustomer(customers);
       _busy = false;
     });
-    if (_isHostedCloudSyncPlan(widget.config.planType)) {
+    if (_usesHostedBackendSync(widget.config)) {
       await _refreshFromCloud(showMessage: false);
     }
   }
 
   Future<void> _refreshFromCloud({bool showMessage = true}) async {
-    if (!_isHostedCloudSyncPlan(widget.config.planType)) {
-      if (showMessage && mounted) {
+    if (!_usesHostedBackendSync(widget.config)) {
+      if (widget.config.syncMode == 'local_multi_shop' &&
+          widget.localSyncCoordinator != null) {
+        if (mounted) {
+          setState(() {
+            _busy = true;
+            if (showMessage) {
+              _statusMessage = 'Refreshing trusted-register synchronization.';
+            }
+          });
+        }
+        try {
+          final metadata = await _apiClient.getLocalSyncMetadata();
+          await widget.localSyncCoordinator!.refreshTrustedPeers(metadata);
+          await _relayWorker?.flushPending();
+          await _reloadLocalSyncData();
+          await _refreshLocalSyncDiagnostics(includeMetadata: true);
+          if (mounted) {
+            setState(() {
+              _busy = false;
+              _statusMessage = 'Local multi-shop data is up to date.';
+            });
+          }
+        } on Exception catch (error) {
+          if (mounted) {
+            setState(() {
+              _busy = false;
+              _offline = true;
+              _statusMessage = formatConnectionError(
+                error,
+                baseUrl: widget.config.baseUrl,
+              );
+            });
+          }
+        }
+      } else if (showMessage && mounted) {
         setState(() {
           _statusMessage =
-              'Free Local mode uses only on-device inventory, customers, and sales data.';
+              widget.config.syncMode == 'local_multi_shop'
+                  ? (widget.localSyncStatusMessage ??
+                      'Pair this register before using local multi-shop sync.')
+                  : 'Device Local mode uses only on-device inventory, customers, and sales data.';
         });
       }
       return;
@@ -2298,21 +3097,24 @@ class _HostedShellViewState extends State<_HostedShellView> {
       await widget.hostedRepository.saveBusinessProfile(profile);
       await widget.hostedRepository.replaceCustomers(customers);
       await widget.hostedRepository.replaceInventoryItems(inventory);
-      for (final sale in sales) {
-        await widget.hostedRepository.saveSale(
-          HostedSaleRecord(
-            saleId: sale.saleId,
-            remoteSaleId: sale.remoteSaleId,
-            customerId: sale.customerId,
-            customerName: sale.customerName,
-            postingDate: sale.postingDate,
-            totalAmount: sale.totalAmount,
-            status: 'submitted',
-            items: sale.items,
-            updatedAt: sale.updatedAt,
-          ),
-        );
-      }
+      await widget.hostedRepository.replaceSubmittedSales(
+        sales
+            .map(
+              (HostedSaleRecord sale) => HostedSaleRecord(
+                saleId: sale.saleId,
+                remoteSaleId: sale.remoteSaleId,
+                customerId: sale.customerId,
+                customerName: sale.customerName,
+                postingDate: sale.postingDate,
+                totalAmount: sale.totalAmount,
+                status: 'submitted',
+                items: sale.items,
+                updatedAt: sale.updatedAt,
+              ),
+            )
+            .toList(growable: false),
+      );
+      final cachedSales = await widget.hostedRepository.listSales();
       if (!mounted) {
         return;
       }
@@ -2320,7 +3122,7 @@ class _HostedShellViewState extends State<_HostedShellView> {
         _profile = profile;
         _customers = customers;
         _inventory = inventory;
-        _sales = sales;
+        _sales = cachedSales;
         _ensureSelectedCustomer(customers);
         _busy = false;
         _offline = false;
@@ -2358,12 +3160,28 @@ class _HostedShellViewState extends State<_HostedShellView> {
     }
   }
 
+  bool _blockUntilLocalSyncPairingCompletes() {
+    if (widget.config.syncMode != 'local_multi_shop' ||
+        widget.localSyncCoordinator != null) {
+      return false;
+    }
+    setState(() {
+      _statusMessage =
+          widget.localSyncStatusMessage ??
+          'Pair this register before creating local multi-shop data.';
+    });
+    return true;
+  }
+
   Future<void> _addInventoryItem() async {
+    if (_blockUntilLocalSyncPairingCompletes()) {
+      return;
+    }
     final draft = await _showInventoryDialog(context);
     if (draft == null) {
       return;
     }
-    final syncToCloud = _isHostedCloudSyncPlan(widget.config.planType);
+    final syncToCloud = _usesHostedBackendSync(widget.config);
     final normalizedItem = normalizeHostedInventoryDraftForSave(
       draft.item,
       syncToCloud: syncToCloud,
@@ -2389,7 +3207,14 @@ class _HostedShellViewState extends State<_HostedShellView> {
                 imageUploadMimeType: imageSelection?.mimeType,
               )
               : localItem;
-      await widget.hostedRepository.upsertInventoryItem(saved);
+      final localSyncCoordinator = widget.localSyncCoordinator;
+      if (!syncToCloud && localSyncCoordinator != null) {
+        await localSyncCoordinator.saveInventoryItem(saved);
+        await _relayWorker?.flushPending();
+        await _refreshLocalSyncDiagnostics();
+      } else {
+        await widget.hostedRepository.upsertInventoryItem(saved);
+      }
       final inventory = await widget.hostedRepository.listInventoryItems();
       if (!mounted) {
         return;
@@ -2398,8 +3223,10 @@ class _HostedShellViewState extends State<_HostedShellView> {
         _inventory = inventory;
         _busy = false;
         _statusMessage =
-            _isHostedCloudSyncPlan(widget.config.planType)
+            syncToCloud
                 ? 'Inventory item saved to Neuradix cloud.'
+                : localSyncCoordinator != null
+                ? 'Inventory item saved for this shop and queued for its registers.'
                 : 'Inventory item saved locally on this device.';
       });
     } on Exception catch (error) {
@@ -2417,11 +3244,14 @@ class _HostedShellViewState extends State<_HostedShellView> {
   }
 
   Future<void> _addCustomer() async {
+    if (_blockUntilLocalSyncPairingCompletes()) {
+      return;
+    }
     final customer = await _showCustomerDialog(context);
     if (customer == null) {
       return;
     }
-    final syncToCloud = _isHostedCloudSyncPlan(widget.config.planType);
+    final syncToCloud = _usesHostedBackendSync(widget.config);
     final normalizedCustomer = normalizeHostedCustomerDraftForSave(
       customer,
       syncToCloud: syncToCloud,
@@ -2434,7 +3264,14 @@ class _HostedShellViewState extends State<_HostedShellView> {
           syncToCloud
               ? await _apiClient.upsertHostedCustomer(normalizedCustomer)
               : normalizedCustomer;
-      await widget.hostedRepository.upsertCustomer(saved);
+      final localSyncCoordinator = widget.localSyncCoordinator;
+      if (!syncToCloud && localSyncCoordinator != null) {
+        await localSyncCoordinator.saveCustomer(saved);
+        await _relayWorker?.flushPending();
+        await _refreshLocalSyncDiagnostics();
+      } else {
+        await widget.hostedRepository.upsertCustomer(saved);
+      }
       final customers = await widget.hostedRepository.listCustomers();
       if (!mounted) {
         return;
@@ -2444,8 +3281,10 @@ class _HostedShellViewState extends State<_HostedShellView> {
         _ensureSelectedCustomer(customers);
         _busy = false;
         _statusMessage =
-            _isHostedCloudSyncPlan(widget.config.planType)
+            syncToCloud
                 ? 'Customer saved to Neuradix cloud.'
+                : localSyncCoordinator != null
+                ? 'Customer saved locally and queued for trusted devices.'
                 : 'Customer saved locally on this device.';
       });
     } on Exception catch (error) {
@@ -2474,6 +3313,10 @@ class _HostedShellViewState extends State<_HostedShellView> {
           displayName: existing.displayName,
           qty: existing.qty + 1,
           rate: existing.rate,
+          sku: existing.sku,
+          barcode: existing.barcode,
+          discountAmount: existing.discountAmount,
+          taxAmount: existing.taxAmount,
           notes: existing.notes,
         );
       } else {
@@ -2484,6 +3327,8 @@ class _HostedShellViewState extends State<_HostedShellView> {
             displayName: item.displayName,
             qty: 1,
             rate: item.price,
+            sku: item.sku,
+            barcode: item.barcode,
           ),
         ];
       }
@@ -2526,6 +3371,9 @@ class _HostedShellViewState extends State<_HostedShellView> {
   }
 
   Future<void> _submitSale() async {
+    if (_blockUntilLocalSyncPairingCompletes()) {
+      return;
+    }
     final customer = _selectedCustomer;
     if (customer == null) {
       setState(() {
@@ -2542,7 +3390,7 @@ class _HostedShellViewState extends State<_HostedShellView> {
     }
 
     final localSale = HostedSaleRecord(
-      saleId: 'local-sale-${DateTime.now().millisecondsSinceEpoch}',
+      saleId: 'local-sale-${generateLocalSyncId()}',
       remoteSaleId: '',
       customerId: customer.customerId,
       customerName: customer.displayName,
@@ -2551,10 +3399,7 @@ class _HostedShellViewState extends State<_HostedShellView> {
         0,
         (double total, HostedSaleLine line) => total + line.amount,
       ),
-      status:
-          _isHostedCloudSyncPlan(widget.config.planType)
-              ? 'queued'
-              : 'local_only',
+      status: _usesHostedBackendSync(widget.config) ? 'queued' : 'local_only',
       items: _cart,
       updatedAt: DateTime.now().toIso8601String(),
     );
@@ -2562,9 +3407,19 @@ class _HostedShellViewState extends State<_HostedShellView> {
     setState(() {
       _busy = true;
     });
+    var savedLocally = false;
     try {
-      await widget.hostedRepository.saveSale(localSale);
-      if (_isHostedCloudSyncPlan(widget.config.planType)) {
+      final localSyncCoordinator = widget.localSyncCoordinator;
+      if (!_usesHostedBackendSync(widget.config) &&
+          localSyncCoordinator != null) {
+        await localSyncCoordinator.saveFinalizedSale(localSale);
+        await _relayWorker?.flushPending();
+        await _refreshLocalSyncDiagnostics();
+      } else {
+        await widget.hostedRepository.saveSale(localSale);
+      }
+      savedLocally = true;
+      if (_usesHostedBackendSync(widget.config)) {
         final submitted = await _apiClient.submitHostedSale(
           localSale,
           deviceId: widget.config.deviceId,
@@ -2587,8 +3442,10 @@ class _HostedShellViewState extends State<_HostedShellView> {
         _busy = false;
         _offline = false;
         _statusMessage =
-            _isHostedCloudSyncPlan(widget.config.planType)
+            _usesHostedBackendSync(widget.config)
                 ? 'Sale recorded and synced to Neuradix cloud.'
+                : localSyncCoordinator != null
+                ? 'Sale recorded locally and queued for trusted devices.'
                 : 'Sale recorded locally on this device.';
       });
     } on Exception catch (error) {
@@ -2598,10 +3455,14 @@ class _HostedShellViewState extends State<_HostedShellView> {
       }
       setState(() {
         _sales = sales;
+        _cart = hostedCartAfterSaleFailure(
+          currentCart: _cart,
+          savedLocally: savedLocally,
+        );
         _busy = false;
         _offline = true;
         _statusMessage =
-            _isHostedCloudSyncPlan(widget.config.planType)
+            savedLocally && _usesHostedBackendSync(widget.config)
                 ? 'Sale queued locally because the Neuradix cloud is unreachable.'
                 : formatConnectionError(error, baseUrl: widget.config.baseUrl);
       });
@@ -2704,12 +3565,39 @@ class _HostedShellViewState extends State<_HostedShellView> {
         _DetailPill(label: 'Business', value: title),
         _DetailPill(
           label: 'Mode',
-          value: _hostedPlanLabel(widget.config.planType),
+          value:
+              widget.config.syncMode == 'local_multi_shop'
+                  ? 'Local Multi-Shop'
+                  : _hostedPlanLabel(widget.config.planType),
         ),
         _DetailPill(
           label: 'Sync',
-          value: _offline ? 'Offline / Cached' : 'Ready',
+          value:
+              widget.config.syncMode == 'local_multi_shop'
+                  ? (widget.localSyncCoordinator == null
+                      ? 'Pairing Required'
+                      : _relayStatus == LocalSyncRelayStatus.connected
+                      ? 'Live Relay'
+                      : _relayStatus == LocalSyncRelayStatus.connecting
+                      ? 'Connecting'
+                      : 'Offline / Queued')
+                  : (_offline ? 'Offline / Cached' : 'Ready'),
         ),
+        if (widget.config.syncMode == 'local_multi_shop')
+          _DetailPill(
+            label: 'Shop',
+            value:
+                widget.config.shopName.isEmpty
+                    ? 'Pairing Required'
+                    : widget.config.shopName,
+          ),
+        if (widget.config.syncMode == 'local_multi_shop')
+          _DetailPill(label: 'Pending', value: '$_pendingSyncEvents'),
+        if (widget.config.syncMode == 'local_multi_shop')
+          _DetailPill(
+            label: 'Last Sync',
+            value: _formatLocalSyncTimestamp(_lastSuccessfulSyncAt),
+          ),
       ],
     );
     final actions = Wrap(
@@ -2874,13 +3762,8 @@ class _HostedShellViewState extends State<_HostedShellView> {
                 _customerSearchController.text.trim().isEmpty
                     ? null
                     : IconButton(
-                      onPressed:
-                          !_customerSearchFocusNode.hasFocus
-                              ? null
-                              : () {
-                                _customerSearchController.clear();
-                                setState(() {});
-                              },
+                      tooltip: 'Clear Selected Customer',
+                      onPressed: _busy ? null : _clearCustomerSelection,
                       icon: const Icon(Icons.close),
                     ),
           ),
@@ -2949,40 +3832,38 @@ class _HostedShellViewState extends State<_HostedShellView> {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final compactShell = constraints.maxWidth < 980;
-        final contentCard = Expanded(
-          child: Card(
-            child: Padding(
-              padding: EdgeInsets.all(compactShell ? 16 : 20),
-              child: _buildBody(context),
-            ),
+        final contentCard = Card(
+          child: Padding(
+            padding: EdgeInsets.all(compactShell ? 16 : 20),
+            child: _buildBody(context),
           ),
         );
 
         if (compactShell) {
           return SafeArea(
-            child: Padding(
+            child: ListView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
               padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
-              child: Column(
-                children: <Widget>[
-                  _buildHostedHeaderCard(context, compact: true),
+              children: <Widget>[
+                _buildHostedHeaderCard(context, compact: true),
+                const SizedBox(height: 14),
+                _buildHostedCompactNavigation(context),
+                const SizedBox(height: 14),
+                if (_statusMessage != null) ...<Widget>[
+                  _InlineMessage(
+                    message: _statusMessage!,
+                    backgroundColor:
+                        _offline
+                            ? Theme.of(context).colorScheme.errorContainer
+                            : Theme.of(context).colorScheme.secondaryContainer,
+                  ),
                   const SizedBox(height: 14),
-                  _buildHostedCompactNavigation(context),
-                  const SizedBox(height: 14),
-                  if (_statusMessage != null) ...<Widget>[
-                    _InlineMessage(
-                      message: _statusMessage!,
-                      backgroundColor:
-                          _offline
-                              ? Theme.of(context).colorScheme.errorContainer
-                              : Theme.of(
-                                context,
-                              ).colorScheme.secondaryContainer,
-                    ),
-                    const SizedBox(height: 14),
-                  ],
-                  contentCard,
                 ],
-              ),
+                SizedBox(
+                  height: hostedCompactBodyHeight(constraints.maxHeight),
+                  child: contentCard,
+                ),
+              ],
             ),
           );
         }
@@ -3021,7 +3902,7 @@ class _HostedShellViewState extends State<_HostedShellView> {
                       ),
                       const SizedBox(height: 18),
                     ],
-                    contentCard,
+                    Expanded(child: contentCard),
                   ],
                 ),
               ),
@@ -3173,6 +4054,11 @@ class _HostedShellViewState extends State<_HostedShellView> {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final compact = hostedSalesUsesCompactLayout(constraints.maxWidth);
+        final scrollWholePane = hostedSalesUsesScrollableNonCompactPane(
+          maxWidth: constraints.maxWidth,
+          maxHeight: constraints.maxHeight,
+        );
+        final embedLists = compact || scrollWholePane;
         final inventoryItems = _filteredInventory;
         final query = _inventorySearchController.text.trim();
         final total = _cart.fold<double>(
@@ -3180,7 +4066,89 @@ class _HostedShellViewState extends State<_HostedShellView> {
           (double sum, HostedSaleLine line) => sum + line.amount,
         );
 
+        final inventoryList =
+            inventoryItems.isEmpty
+                ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 24),
+                    child: Text(
+                      query.isEmpty
+                          ? 'Add inventory items first.'
+                          : 'No items match "$query".',
+                    ),
+                  ),
+                )
+                : ListView.separated(
+                  shrinkWrap: embedLists,
+                  physics:
+                      embedLists ? const NeverScrollableScrollPhysics() : null,
+                  itemCount: inventoryItems.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (BuildContext context, int index) {
+                    final item = inventoryItems[index];
+                    final subtitle = <String>[
+                      if (item.sku.trim().isNotEmpty) item.sku.trim(),
+                      if (item.barcode.trim().isNotEmpty)
+                        'Barcode ${item.barcode.trim()}',
+                      'Stock ${item.stockQty.toStringAsFixed(0)}',
+                    ].join(' • ');
+                    return InkWell(
+                      borderRadius: BorderRadius.circular(20),
+                      onTap: _busy ? null : () => _addToCart(item),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 14,
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: <Widget>[
+                            _buildHostedInventoryThumbnail(item),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: <Widget>[
+                                  Text(
+                                    item.displayName,
+                                    style:
+                                        Theme.of(context).textTheme.titleMedium,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(subtitle),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: <Widget>[
+                                Text(
+                                  'EUR ${item.price.toStringAsFixed(2)}',
+                                  style:
+                                      Theme.of(context).textTheme.titleMedium,
+                                ),
+                                const SizedBox(height: 10),
+                                FilledButton.icon(
+                                  onPressed:
+                                      _busy ? null : () => _addToCart(item),
+                                  icon: const Icon(
+                                    Icons.add_shopping_cart_outlined,
+                                  ),
+                                  label: Text(compact ? 'Add' : 'Add to Cart'),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                );
+
         final inventoryPane = Column(
+          mainAxisSize: embedLists ? MainAxisSize.min : MainAxisSize.max,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Text('Inventory', style: Theme.of(context).textTheme.headlineSmall),
@@ -3219,95 +4187,42 @@ class _HostedShellViewState extends State<_HostedShellView> {
               ),
             ),
             const SizedBox(height: 12),
-            Expanded(
-              child:
-                  inventoryItems.isEmpty
-                      ? Center(
-                        child: Text(
-                          query.isEmpty
-                              ? 'Add inventory items first.'
-                              : 'No items match "$query".',
-                        ),
-                      )
-                      : ListView.separated(
-                        itemCount: inventoryItems.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
-                        itemBuilder: (BuildContext context, int index) {
-                          final item = inventoryItems[index];
-                          final subtitle = <String>[
-                            if (item.sku.trim().isNotEmpty) item.sku.trim(),
-                            if (item.barcode.trim().isNotEmpty)
-                              'Barcode ${item.barcode.trim()}',
-                            'Stock ${item.stockQty.toStringAsFixed(0)}',
-                          ].join(' • ');
-                          return InkWell(
-                            borderRadius: BorderRadius.circular(20),
-                            onTap: _busy ? null : () => _addToCart(item),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 14,
-                              ),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                children: <Widget>[
-                                  _buildHostedInventoryThumbnail(item),
-                                  const SizedBox(width: 14),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: <Widget>[
-                                        Text(
-                                          item.displayName,
-                                          style:
-                                              Theme.of(
-                                                context,
-                                              ).textTheme.titleMedium,
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(subtitle),
-                                      ],
-                                    ),
-                                  ),
-                                  const SizedBox(width: 16),
-                                  Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: <Widget>[
-                                      Text(
-                                        'EUR ${item.price.toStringAsFixed(2)}',
-                                        style:
-                                            Theme.of(
-                                              context,
-                                            ).textTheme.titleMedium,
-                                      ),
-                                      const SizedBox(height: 10),
-                                      FilledButton.icon(
-                                        onPressed:
-                                            _busy
-                                                ? null
-                                                : () => _addToCart(item),
-                                        icon: const Icon(
-                                          Icons.add_shopping_cart_outlined,
-                                        ),
-                                        label: Text(
-                                          compact ? 'Add' : 'Add to Cart',
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-            ),
+            if (embedLists) inventoryList else Expanded(child: inventoryList),
           ],
         );
 
+        final cartList =
+            _cart.isEmpty
+                ? const Center(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: Text('Cart is empty.'),
+                  ),
+                )
+                : ListView.separated(
+                  shrinkWrap: embedLists,
+                  physics:
+                      embedLists ? const NeverScrollableScrollPhysics() : null,
+                  itemCount: _cart.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (BuildContext context, int index) {
+                    final line = _cart[index];
+                    return ListTile(
+                      title: Text(line.displayName),
+                      subtitle: Text(
+                        'Qty ${line.qty.toStringAsFixed(0)} • EUR ${line.rate.toStringAsFixed(2)}',
+                      ),
+                      trailing: IconButton(
+                        onPressed:
+                            _busy ? null : () => _removeFromCart(line.itemId),
+                        icon: const Icon(Icons.delete_outline),
+                      ),
+                    );
+                  },
+                );
+
         final cartPane = Column(
+          mainAxisSize: embedLists ? MainAxisSize.min : MainAxisSize.max,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Text(
@@ -3317,31 +4232,7 @@ class _HostedShellViewState extends State<_HostedShellView> {
             const SizedBox(height: 12),
             _buildHostedCustomerSearchField(context),
             const SizedBox(height: 12),
-            Expanded(
-              child:
-                  _cart.isEmpty
-                      ? const Center(child: Text('Cart is empty.'))
-                      : ListView.separated(
-                        itemCount: _cart.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
-                        itemBuilder: (BuildContext context, int index) {
-                          final line = _cart[index];
-                          return ListTile(
-                            title: Text(line.displayName),
-                            subtitle: Text(
-                              'Qty ${line.qty.toStringAsFixed(0)} • EUR ${line.rate.toStringAsFixed(2)}',
-                            ),
-                            trailing: IconButton(
-                              onPressed:
-                                  _busy
-                                      ? null
-                                      : () => _removeFromCart(line.itemId),
-                              icon: const Icon(Icons.delete_outline),
-                            ),
-                          );
-                        },
-                      ),
-            ),
+            if (embedLists) cartList else Expanded(child: cartList),
             const SizedBox(height: 12),
             compact
                 ? Column(
@@ -3379,11 +4270,39 @@ class _HostedShellViewState extends State<_HostedShellView> {
         );
 
         if (compact) {
-          return Column(
+          return ListView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             children: <Widget>[
-              Expanded(child: inventoryPane),
+              inventoryPane,
               const SizedBox(height: 18),
-              Expanded(child: cartPane),
+              const Divider(height: 1),
+              const SizedBox(height: 18),
+              cartPane,
+            ],
+          );
+        }
+        if (scrollWholePane) {
+          return Row(
+            children: <Widget>[
+              Expanded(
+                flex: 7,
+                child: ListView(
+                  key: const Key('hosted-sales-inventory-scroll-pane'),
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  children: <Widget>[inventoryPane],
+                ),
+              ),
+              const SizedBox(width: 18),
+              SizedBox(
+                width: hostedSalesCartPanelWidth(constraints.maxWidth),
+                child: ListView(
+                  key: const Key('hosted-sales-cart-scroll-pane'),
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  children: <Widget>[cartPane],
+                ),
+              ),
             ],
           );
         }
@@ -3433,8 +4352,202 @@ class _HostedShellViewState extends State<_HostedShellView> {
     );
   }
 
+  Future<void> _showApprovePairingDialog() async {
+    final pairingCode = await showLocalSyncPairingApprovalDialog(context);
+    if (!mounted) {
+      return;
+    }
+    if (pairingCode == null || pairingCode.trim().isEmpty) {
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _statusMessage = 'Approving the new trusted register.';
+    });
+    try {
+      final message = await widget.onApprovePairing(pairingCode);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _statusMessage = message;
+        });
+      }
+    } on Exception catch (error) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _statusMessage = '$error';
+        });
+      }
+    }
+  }
+
+  Future<void> _completePairing() async {
+    setState(() {
+      _busy = true;
+      _statusMessage = 'Completing trusted-register pairing.';
+    });
+    try {
+      final message = await widget.onCompletePairing();
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _statusMessage = message;
+        });
+      }
+    } on Exception catch (error) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _statusMessage = '$error';
+        });
+      }
+    }
+  }
+
+  Future<void> _showCreateLocalSyncShopDialog() async {
+    final draft = await showCreateLocalSyncShopDialog(context);
+    if (draft == null || !mounted) {
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _statusMessage = 'Creating ${draft.name}.';
+    });
+    try {
+      await _apiClient.createLocalSyncShop(
+        shopName: draft.name,
+        shopCode: draft.code,
+      );
+      await _refreshLocalSyncDiagnostics(includeMetadata: true);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _statusMessage = '${draft.name} is ready for register enrollment.';
+        });
+      }
+    } on Exception catch (error) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _statusMessage = formatConnectionError(
+            error,
+            baseUrl: widget.config.baseUrl,
+          );
+        });
+      }
+    }
+  }
+
+  Future<void> _showReassignCurrentShopDialog() async {
+    final blockedReason = await widget.onCheckShopReassignment(_cart.length);
+    if (!mounted) {
+      return;
+    }
+    if (blockedReason != null) {
+      setState(() {
+        _statusMessage = blockedReason;
+      });
+      return;
+    }
+    final shops = (_localSyncMetadata?.activeShops ?? const <LocalSyncShop>[])
+        .where((LocalSyncShop shop) => shop.shopId != widget.config.shopId)
+        .toList(growable: false);
+    if (shops.isEmpty) {
+      setState(() {
+        _statusMessage =
+            'Create another shop before reassigning this register.';
+      });
+      return;
+    }
+    final selected = await showDialog<LocalSyncShop>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: const Text('Move Register To Another Shop'),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480, maxHeight: 420),
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: shops.length,
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemBuilder: (BuildContext context, int index) {
+                final shop = shops[index];
+                return ListTile(
+                  key: Key('reassign-shop-${shop.shopId}'),
+                  leading: const Icon(Icons.storefront_outlined),
+                  title: Text(shop.shopName),
+                  subtitle: Text(shop.shopCode),
+                  onTap: () => Navigator.of(dialogContext).pop(shop),
+                );
+              },
+            ),
+          ),
+        );
+      },
+    );
+    if (selected == null || !mounted) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: Text('Move to ${selected.shopName}?'),
+          content: const Text(
+            'The current shop catalog and stock will be removed from this register. '
+            'Shared customers and finalized sales remain available. Reassignment is '
+            'blocked while local work is pending.',
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Keep Current Shop'),
+            ),
+            ElevatedButton(
+              key: const Key('confirm-shop-reassignment'),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Move Register'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _statusMessage = 'Moving this register to ${selected.shopName}.';
+    });
+    try {
+      final message = await widget.onReassignCurrentShop(
+        selected,
+        _cart.length,
+      );
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _statusMessage = message;
+        });
+      }
+    } on Exception catch (error) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _statusMessage = '$error';
+        });
+      }
+    }
+  }
+
   Widget _buildProfileView(BuildContext context) {
     final profile = _profile;
+    final localSyncBootstrap = widget.localSyncBootstrapResult;
+    final pairingCode =
+        localSyncBootstrap?.pairingPayload.isNotEmpty == true
+            ? encodeLocalSyncPairingCode(localSyncBootstrap!.pairingPayload)
+            : '';
     return ListView(
       children: <Widget>[
         Text('My Profile', style: Theme.of(context).textTheme.headlineMedium),
@@ -3452,6 +4565,25 @@ class _HostedShellViewState extends State<_HostedShellView> {
           value: profile?.ownerUser ?? widget.session.email,
         ),
         _InfoRow(label: 'Device', value: widget.config.deviceName),
+        if (widget.config.syncMode == 'local_multi_shop')
+          _InfoRow(
+            label: 'Shop',
+            value:
+                widget.config.shopName.isNotEmpty
+                    ? widget.config.shopName
+                    : 'Pending pairing',
+          ),
+        if (widget.config.syncMode == 'local_multi_shop')
+          _InfoRow(label: 'Register ID', value: widget.config.deviceId),
+        if (widget.config.syncMode == 'local_multi_shop')
+          _InfoRow(label: 'Relay', value: _relayStatus.name),
+        if (widget.config.syncMode == 'local_multi_shop')
+          _InfoRow(label: 'Pending Events', value: '$_pendingSyncEvents'),
+        if (widget.config.syncMode == 'local_multi_shop')
+          _InfoRow(
+            label: 'Last Successful Sync',
+            value: _formatLocalSyncTimestamp(_lastSuccessfulSyncAt),
+          ),
         _InfoRow(label: 'Support', value: widget.bootstrap.supportEmail),
         if ((profile?.planCaps.isNotEmpty ?? false))
           _InfoRow(
@@ -3468,6 +4600,145 @@ class _HostedShellViewState extends State<_HostedShellView> {
             ].join(' • '),
           ),
         const SizedBox(height: 18),
+        if (widget.config.syncMode == 'local_multi_shop' &&
+            profile?.membershipRole == 'Owner') ...<Widget>[
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  'Shop Management',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ),
+              OutlinedButton.icon(
+                key: const Key('create-local-sync-shop'),
+                onPressed: _busy ? null : _showCreateLocalSyncShopDialog,
+                icon: const Icon(Icons.add_business_outlined),
+                label: const Text('Add Shop'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Inventory stays within each shop. Customers and finalized sales '
+            'synchronize across all trusted shops while devices overlap online.',
+          ),
+          const SizedBox(height: 12),
+          ...(_localSyncMetadata?.activeShops ?? const <LocalSyncShop>[]).map(
+            (LocalSyncShop shop) => Card(
+              child: ListTile(
+                leading: Icon(
+                  shop.shopId == widget.config.shopId
+                      ? Icons.store
+                      : Icons.storefront_outlined,
+                ),
+                title: Text(shop.shopName),
+                subtitle: Text(
+                  '${shop.shopCode} • '
+                  '${_localSyncMetadata?.devices.where((device) => device.shopId == shop.shopId && device.isActive).length ?? 0} trusted register(s)',
+                ),
+                trailing:
+                    shop.shopId == widget.config.shopId
+                        ? const Chip(label: Text('This Register'))
+                        : null,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            key: const Key('reassign-current-register-shop'),
+            onPressed:
+                _busy || widget.localSyncCoordinator == null
+                    ? null
+                    : _showReassignCurrentShopDialog,
+            icon: const Icon(Icons.move_down_outlined),
+            label: const Text('Change This Register Shop'),
+          ),
+          const SizedBox(height: 18),
+          Text(
+            'Trusted Registers',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 8),
+          ...(_localSyncMetadata?.devices ?? const <LocalSyncDeviceSummary>[]).map(
+            (LocalSyncDeviceSummary device) => ListTile(
+              dense: true,
+              leading: Icon(
+                device.isActive
+                    ? Icons.verified_user_outlined
+                    : Icons.phonelink_erase_outlined,
+              ),
+              title: Text(device.deviceName),
+              subtitle: Text(
+                '${device.shopName} • ${device.status}'
+                '${device.lastSeenOn.isEmpty ? '' : ' • Last seen ${device.lastSeenOn}'}',
+              ),
+              trailing:
+                  device.deviceId == widget.config.deviceId
+                      ? const Text('Current')
+                      : null,
+            ),
+          ),
+          const SizedBox(height: 18),
+        ],
+        if (pairingCode.isNotEmpty) ...<Widget>[
+          Text(
+            'Pair This Register',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Enter this code on an existing trusted register, approve it, then return here.',
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: SelectableText(
+              pairingCode,
+              key: const Key('local-sync-pairing-code'),
+              style: const TextStyle(fontFamily: 'monospace'),
+            ),
+          ),
+          const SizedBox(height: 12),
+          ElevatedButton.icon(
+            key: const Key('complete-local-sync-pairing'),
+            onPressed: _busy ? null : _completePairing,
+            icon: const Icon(Icons.verified_user_outlined),
+            label: const Text('Complete Pairing'),
+          ),
+          const SizedBox(height: 8),
+          TextButton.icon(
+            key: const Key('copy-local-sync-pairing-code'),
+            onPressed:
+                _busy
+                    ? null
+                    : () async {
+                      await Clipboard.setData(ClipboardData(text: pairingCode));
+                      if (mounted) {
+                        setState(() {
+                          _statusMessage =
+                              'Pairing code copied. Paste it on a trusted register.';
+                        });
+                      }
+                    },
+            icon: const Icon(Icons.copy_outlined),
+            label: const Text('Copy Pairing Code'),
+          ),
+          const SizedBox(height: 18),
+        ],
+        if (widget.localSyncCoordinator != null) ...<Widget>[
+          OutlinedButton.icon(
+            key: const Key('approve-local-sync-register'),
+            onPressed: _busy ? null : _showApprovePairingDialog,
+            icon: const Icon(Icons.phonelink_lock_outlined),
+            label: const Text('Approve New Register'),
+          ),
+          const SizedBox(height: 12),
+        ],
         if (widget.config.planType != 'paid_cloud')
           ElevatedButton.icon(
             onPressed:

@@ -62,6 +62,10 @@ class HostedLocalRepository {
     );
   }
 
+  Future<void> clearInventoryItems() async {
+    await database.delete('hosted_inventory_items');
+  }
+
   Future<void> deleteInventoryItem(String itemId) async {
     await database.delete(
       'hosted_inventory_items',
@@ -117,12 +121,63 @@ class HostedLocalRepository {
         batch.insert('hosted_sale_items', <String, Object?>{
           'sale_id': sale.saleId,
           'item_id': item.itemId,
+          'sku': item.sku,
+          'barcode': item.barcode,
           'display_name': item.displayName,
           'qty': item.qty,
           'rate': item.rate,
+          'discount_amount': item.discountAmount,
+          'tax_amount': item.taxAmount,
           'amount': item.amount,
           'notes': item.notes,
         });
+      }
+      await batch.commit(noResult: true);
+    });
+  }
+
+  Future<void> replaceSubmittedSales(List<HostedSaleRecord> sales) async {
+    await database.transaction((Transaction transaction) async {
+      final submittedRows = await transaction.query(
+        'hosted_sales',
+        columns: <String>['sale_id'],
+        where: "status = 'submitted'",
+      );
+      final submittedIds = submittedRows
+          .map((Map<String, Object?> row) => '${row['sale_id']}')
+          .toList(growable: false);
+      if (submittedIds.isNotEmpty) {
+        await transaction.delete(
+          'hosted_sale_items',
+          where:
+              'sale_id IN (${List<String>.filled(submittedIds.length, '?').join(',')})',
+          whereArgs: submittedIds,
+        );
+      }
+      await transaction.delete('hosted_sales', where: "status = 'submitted'");
+
+      final batch = transaction.batch();
+      for (final sale in sales) {
+        batch.insert(
+          'hosted_sales',
+          sale.toSaleRow(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+        for (final item in sale.items) {
+          batch.insert('hosted_sale_items', <String, Object?>{
+            'sale_id': sale.saleId,
+            'item_id': item.itemId,
+            'sku': item.sku,
+            'barcode': item.barcode,
+            'display_name': item.displayName,
+            'qty': item.qty,
+            'rate': item.rate,
+            'discount_amount': item.discountAmount,
+            'tax_amount': item.taxAmount,
+            'amount': item.amount,
+            'notes': item.notes,
+          });
+        }
       }
       await batch.commit(noResult: true);
     });
@@ -153,9 +208,14 @@ class HostedLocalRepository {
           .add(
             HostedSaleLine(
               itemId: '${row['item_id']}',
+              sku: '${row['sku'] ?? ''}',
+              barcode: '${row['barcode'] ?? ''}',
               displayName: '${row['display_name']}',
               qty: double.tryParse('${row['qty'] ?? 0}') ?? 0,
               rate: double.tryParse('${row['rate'] ?? 0}') ?? 0,
+              discountAmount:
+                  double.tryParse('${row['discount_amount'] ?? 0}') ?? 0,
+              taxAmount: double.tryParse('${row['tax_amount'] ?? 0}') ?? 0,
               notes: '${row['notes'] ?? ''}',
             ),
           );
@@ -237,5 +297,24 @@ class HostedLocalRepository {
       await transaction.delete('hosted_sale_items');
       await transaction.delete('hosted_upgrade_batches');
     });
+  }
+
+  Future<String?> prepareForBusiness(String businessId) async {
+    final profile = await readBusinessProfile();
+    if (profile == null ||
+        profile.businessId.isEmpty ||
+        profile.businessId == businessId) {
+      return null;
+    }
+
+    final pendingSales = await listPendingSales();
+    if (pendingSales.isNotEmpty) {
+      return 'This device still has ${pendingSales.length} unsynced or '
+          'local-only sale(s) for ${profile.businessName}. Sync or export '
+          'them before signing in to another business.';
+    }
+
+    await clearHostedData();
+    return null;
   }
 }

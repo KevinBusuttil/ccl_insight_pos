@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as path;
 
+import '../local_sync/local_sync_ids.dart';
 import 'hosted_models.dart';
 
 String hostedCustomerSearchLabel(HostedCustomer customer) {
@@ -105,6 +106,22 @@ Uint8List? decodeHostedImageDataUri(String imageUrl) {
   }
 }
 
+String? localSyncShopReassignmentBlockReason({
+  required int pendingEvents,
+  required int parkedOrders,
+  required int queuedOrders,
+  required int activeCartLines,
+}) {
+  if (activeCartLines > 0) {
+    return 'Complete or clear the active cart before changing this register shop.';
+  }
+  if (pendingEvents > 0 || parkedOrders > 0 || queuedOrders > 0) {
+    return 'Shop reassignment is blocked until $pendingEvents sync event(s), '
+        '$parkedOrders parked order(s), and $queuedOrders queued order(s) are cleared.';
+  }
+  return null;
+}
+
 String hostedResolveImageUrl({
   required String imageUrl,
   required String baseUrl,
@@ -129,8 +146,10 @@ String hostedLocalInventoryId([DateTime? timestamp]) {
 }
 
 String hostedLocalCustomerId([DateTime? timestamp]) {
-  final effectiveTimestamp = timestamp ?? DateTime.now();
-  return 'local-customer-${effectiveTimestamp.microsecondsSinceEpoch}';
+  if (timestamp != null) {
+    return 'local-customer-${timestamp.microsecondsSinceEpoch}';
+  }
+  return 'local-customer-${generateLocalSyncId()}';
 }
 
 HostedInventoryItem normalizeHostedInventoryDraftForSave(
@@ -167,4 +186,14 @@ HostedCustomer normalizeHostedCustomerDraftForSave(
     return customer.copyWith(customerId: normalizedCustomerId);
   }
   return customer.copyWith(customerId: hostedLocalCustomerId(timestamp));
+}
+
+List<HostedSaleLine> hostedCartAfterSaleFailure({
+  required Iterable<HostedSaleLine> currentCart,
+  required bool savedLocally,
+}) {
+  if (savedLocally) {
+    return <HostedSaleLine>[];
+  }
+  return List<HostedSaleLine>.from(currentCart);
 }

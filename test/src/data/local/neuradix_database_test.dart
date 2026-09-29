@@ -6,6 +6,10 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('allows enough time for first-run mobile schema creation', () {
+    expect(neuradixDatabaseOpenTimeout, const Duration(seconds: 60));
+  });
+
   test('creates the expected SQLite tables', () async {
     sqfliteFfiInit();
     final database = NeuradixDatabase(
@@ -45,6 +49,46 @@ void main() {
 
     await database.close();
   });
+
+  test(
+    'creates local sync tables and immutable sale snapshot columns',
+    () async {
+      sqfliteFfiInit();
+      final database = NeuradixDatabase(
+        databaseFactoryOverride: databaseFactoryFfi,
+        databasePath: inMemoryDatabasePath,
+      );
+      final openedDatabase = await database.open();
+
+      final tableRows = await openedDatabase.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type = 'table'",
+      );
+      final tableNames =
+          tableRows.map((Map<String, Object?> row) => '${row['name']}').toSet();
+      final saleItemRows = await openedDatabase.rawQuery(
+        'PRAGMA table_info(hosted_sale_items)',
+      );
+      final saleItemColumns =
+          saleItemRows
+              .map((Map<String, Object?> row) => '${row['name']}')
+              .toSet();
+
+      expect(tableNames, contains('local_sync_events'));
+      expect(tableNames, contains('local_sync_field_versions'));
+      expect(tableNames, contains('local_sync_conflicts'));
+      expect(
+        saleItemColumns,
+        containsAll(<String>[
+          'sku',
+          'barcode',
+          'discount_amount',
+          'tax_amount',
+        ]),
+      );
+
+      await database.close();
+    },
+  );
 
   test('upgrades a legacy catalog cache schema with the new columns', () async {
     sqfliteFfiInit();

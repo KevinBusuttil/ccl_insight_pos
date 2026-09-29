@@ -31,6 +31,13 @@ void main() {
         themeTextOnPrimary: '#FFFFFF',
         themeSurface: '#F4F7F5',
         themeActive: '#355B66',
+        syncMode: 'local_multi_shop',
+        relayUrl: 'wss://relay.neuradix.test',
+        protocolVersion: 2,
+        metadataOnly: true,
+        featureLocalMultiShopSync: true,
+        shopId: 'SHOP-1',
+        shopName: 'Main Shop',
       ),
     );
 
@@ -45,6 +52,13 @@ void main() {
     expect(config?.defaultCloudBaseUrl, 'http://cloud.neuradix.local:8008');
     expect(config?.themeSecondary, '#86A96F');
     expect(config?.themeAccent, '#5E6B73');
+    expect(config?.syncMode, 'local_multi_shop');
+    expect(config?.relayUrl, 'wss://relay.neuradix.test');
+    expect(config?.protocolVersion, 2);
+    expect(config?.metadataOnly, isTrue);
+    expect(config?.featureLocalMultiShopSync, isTrue);
+    expect(config?.shopId, 'SHOP-1');
+    expect(config?.shopName, 'Main Shop');
 
     await database.close();
   });

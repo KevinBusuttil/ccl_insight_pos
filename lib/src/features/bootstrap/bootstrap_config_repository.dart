@@ -35,11 +35,12 @@ class BootstrapConfigRepository {
       return null;
     }
 
+    final planType = values['plan_type'] ?? 'free_local';
     return BootstrapConfig(
       baseUrl: baseUrl,
       useSsl: values['use_ssl'] == '1',
       deploymentMode: values['deployment_mode'] ?? 'external_backend',
-      planType: values['plan_type'] ?? 'free_local',
+      planType: planType,
       brandName: values['brand_name'] ?? 'Neuradix POS',
       supportEmail: values['support_email'] ?? 'support@neuradix.local',
       defaultCloudBaseUrl: normalizeBenchUrlForRuntime(
@@ -55,6 +56,17 @@ class BootstrapConfigRepository {
       businessName: values['business_name'] ?? '',
       deviceId: values['device_id'] ?? '',
       deviceName: values['device_name'] ?? '',
+      syncMode:
+          values['sync_mode'] ??
+          ((planType == 'free_cloud' || planType == 'paid_cloud')
+              ? 'hosted_backend'
+              : 'device_local'),
+      relayUrl: values['relay_url'] ?? '',
+      protocolVersion: int.tryParse(values['protocol_version'] ?? '') ?? 1,
+      metadataOnly: values['metadata_only'] == '1',
+      featureLocalMultiShopSync: values['feature_local_multi_shop_sync'] == '1',
+      shopId: values['shop_id'] ?? '',
+      shopName: values['shop_name'] ?? '',
     );
   }
 }
