@@ -108,7 +108,9 @@ class PosHomeController extends ChangeNotifier {
   String get selectedPlanDate => _selectedPlanDate;
   String? get lastDaySyncAt => _lastDaySyncAt;
   String? get statusMessage => _statusMessage;
-  bool get isBusy => _busy || _quoteBusy;
+  bool _customerLoading = false;
+  bool get isCustomerLoading => _customerLoading;
+  bool get isBusy => _busy || _quoteBusy || _customerLoading;
   bool get isOffline => _offline;
   bool get isPreview => session.previewMode;
   bool get selectedCustomerOfflineReady => _selectedCustomerOfflineReady;
@@ -345,93 +347,102 @@ class PosHomeController extends ChangeNotifier {
   }
 
   Future<void> selectCustomer(PosCustomer customer) async {
-    _quotedOrderClientId = null;
-    _selectedCustomer = customer;
-    _cartQuote = null;
-    ++_quoteRevision;
-    _selectedPolicy =
-        _policyByCustomer[customer.id] ??
-        PosCustomerPolicy(
-          customer: customer.id,
-          customerCode: customer.customerCode,
-          isFrozen: customer.isFrozen,
-          minimumOrderAmount: bootstrap.minimumOrderAmount,
-          minimumOrderRequired: true,
-          notesBypassMinimum: bootstrap.notesBypassMinimum,
-          outstandingAmount: customer.outstandingAmount,
-          hasOutstandingDocuments: customer.outstandingAmount > 0,
-          sameDayOrders: 0,
-        );
-    _selectedIssueStatement = _issueStatements[customer.id];
-    _selectedCustomerOfflineReady = await cacheRepository.hasCustomerPriceSync(
-      _selectedPlanDate,
-      customer.id,
-    );
-    _statusMessage = null;
-
-    if (apiClient != null && !isPreview) {
-      try {
-        _busy = true;
-        notifyListeners();
-        final livePolicy = await apiClient!.getCustomerPolicy(customer.id);
-        final liveStatement = await apiClient!.getIssueStatement(customer.id);
-        final liveCatalog = await apiClient!.getCatalog(
-          customer:
-              _usesServerQuotes
-                  ? customer.id
-                  : (customer.customerCode.isNotEmpty
-                      ? customer.customerCode
-                      : customer.id),
-        );
-        _policyByCustomer[customer.id] = livePolicy;
-        _issueStatements[customer.id] = liveStatement;
-        _selectedPolicy = livePolicy;
-        _selectedIssueStatement = liveStatement;
-        await cacheRepository.saveIssueStatement(customer.id, <String, dynamic>{
-          'CustomerId': liveStatement.customerId,
-          'Balance': liveStatement.balance,
-          'payment_term': liveStatement.paymentTerm,
-          'vat': liveStatement.vat,
-          'primary_address': liveStatement.primaryAddress,
-          'min_order_limit': liveStatement.minimumOrderRequired,
-          'CustTrans': <String, Object?>{
-            'BTLAPICustTrans': liveStatement.rows
-                .map(
-                  (PosIssueStatementRow row) => <String, Object?>{
-                    'InvoiceId': row.invoiceId,
-                    'InvoiceDate': row.invoiceDate,
-                    'DueDate': row.dueDate,
-                    'Amount': row.amount,
-                    'Balance': row.balance,
-                    'Total Row Balance': row.totalRowBalance,
-                    'Currency': row.currency,
-                    'TransType': row.transactionType,
-                  },
-                )
-                .toList(growable: false),
-          },
-        });
-        _activeCatalogSourceGroups = liveCatalog;
-        _offline = false;
-        _applyCatalogFilters();
-      } on Exception {
-        _offline = true;
-        if (_usesServerQuotes) {
-          _activeCatalogSourceGroups = [];
-          _applyCatalogFilters();
-          _statusMessage = 'Customer prices unavailable. Reconnect and retry.';
-        } else {
-          await _applyOfflineCatalogForSelectedCustomer();
-        }
-      } finally {
-        _busy = false;
-      }
-    } else {
-      await _applyOfflineCatalogForSelectedCustomer();
-    }
-
-    if (_usesServerQuotes) await refreshCartQuote();
+    if (isBusy) return;
+    _customerLoading = true;
     notifyListeners();
+    try {
+      _quotedOrderClientId = null;
+      _selectedCustomer = customer;
+      _cartQuote = null;
+      ++_quoteRevision;
+      _selectedPolicy =
+          _policyByCustomer[customer.id] ??
+          PosCustomerPolicy(
+            customer: customer.id,
+            customerCode: customer.customerCode,
+            isFrozen: customer.isFrozen,
+            minimumOrderAmount: bootstrap.minimumOrderAmount,
+            minimumOrderRequired: true,
+            notesBypassMinimum: bootstrap.notesBypassMinimum,
+            outstandingAmount: customer.outstandingAmount,
+            hasOutstandingDocuments: customer.outstandingAmount > 0,
+            sameDayOrders: 0,
+          );
+      _selectedIssueStatement = _issueStatements[customer.id];
+      _selectedCustomerOfflineReady = await cacheRepository
+          .hasCustomerPriceSync(_selectedPlanDate, customer.id);
+      _statusMessage = null;
+
+      if (apiClient != null && !isPreview) {
+        try {
+          _busy = true;
+          notifyListeners();
+          final livePolicy = await apiClient!.getCustomerPolicy(customer.id);
+          final liveStatement = await apiClient!.getIssueStatement(customer.id);
+          final liveCatalog = await apiClient!.getCatalog(
+            customer:
+                _usesServerQuotes
+                    ? customer.id
+                    : (customer.customerCode.isNotEmpty
+                        ? customer.customerCode
+                        : customer.id),
+          );
+          _policyByCustomer[customer.id] = livePolicy;
+          _issueStatements[customer.id] = liveStatement;
+          _selectedPolicy = livePolicy;
+          _selectedIssueStatement = liveStatement;
+          await cacheRepository.saveIssueStatement(
+            customer.id,
+            <String, dynamic>{
+              'CustomerId': liveStatement.customerId,
+              'Balance': liveStatement.balance,
+              'payment_term': liveStatement.paymentTerm,
+              'vat': liveStatement.vat,
+              'primary_address': liveStatement.primaryAddress,
+              'min_order_limit': liveStatement.minimumOrderRequired,
+              'CustTrans': <String, Object?>{
+                'BTLAPICustTrans': liveStatement.rows
+                    .map(
+                      (PosIssueStatementRow row) => <String, Object?>{
+                        'InvoiceId': row.invoiceId,
+                        'InvoiceDate': row.invoiceDate,
+                        'DueDate': row.dueDate,
+                        'Amount': row.amount,
+                        'Balance': row.balance,
+                        'Total Row Balance': row.totalRowBalance,
+                        'Currency': row.currency,
+                        'TransType': row.transactionType,
+                      },
+                    )
+                    .toList(growable: false),
+              },
+            },
+          );
+          _activeCatalogSourceGroups = liveCatalog;
+          _offline = false;
+          _applyCatalogFilters();
+        } on Exception {
+          _offline = true;
+          if (_usesServerQuotes) {
+            _activeCatalogSourceGroups = [];
+            _applyCatalogFilters();
+            _statusMessage =
+                'Customer prices unavailable. Reconnect and retry.';
+          } else {
+            await _applyOfflineCatalogForSelectedCustomer();
+          }
+        } finally {
+          _busy = false;
+        }
+      } else {
+        await _applyOfflineCatalogForSelectedCustomer();
+      }
+
+      if (_usesServerQuotes) await refreshCartQuote();
+    } finally {
+      _customerLoading = false;
+      notifyListeners();
+    }
   }
 
   Future<PosCustomer?> lookupCustomerByMobile(String mobileNo) async {
@@ -762,6 +773,7 @@ class PosHomeController extends ChangeNotifier {
   }
 
   Future<void> addItem(PosCatalogItem item) async {
+    if (isBusy) return;
     _quotedOrderClientId = null;
     if (_usesServerQuotes &&
         (_selectedCustomer == null || !item.pricingAvailable)) {

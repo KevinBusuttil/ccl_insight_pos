@@ -5180,6 +5180,13 @@ class _PosShellView extends StatelessWidget {
                       ),
                       const SizedBox(height: 12),
                     ],
+                    if (controller.isBusy)
+                      PosLoadingIndicator(
+                        label:
+                            controller.isCustomerLoading
+                                ? 'Loading customer prices and account…'
+                                : 'Fetching prices / syncing data…',
+                      ),
                     Expanded(child: _buildSelectedView(context)),
                   ],
                 ),
@@ -5460,6 +5467,87 @@ class _ShellHeader extends StatelessWidget {
   }
 }
 
+/// Keeps the cart reachable while browsing on phones and short emulator screens.
+class CompactOrderWorkspace extends StatelessWidget {
+  const CompactOrderWorkspace({
+    super.key,
+    required this.catalog,
+    required this.cart,
+    required this.cartLabel,
+  });
+  final Widget catalog;
+  final Widget cart;
+  final String cartLabel;
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      Expanded(
+        child: SingleChildScrollView(
+          child: SizedBox(height: 720, child: catalog),
+        ),
+      ),
+      SafeArea(
+        top: false,
+        child: SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            icon: const Icon(Icons.shopping_cart_outlined),
+            label: Text(cartLabel),
+            onPressed:
+                () => showModalBottomSheet<void>(
+                  context: context,
+                  isScrollControlled: true,
+                  builder:
+                      (context) => SafeArea(
+                        child: SizedBox(
+                          height: MediaQuery.sizeOf(context).height * .9,
+                          child: Column(
+                            children: [
+                              Row(
+                                children: [
+                                  const Expanded(
+                                    child: Padding(
+                                      padding: EdgeInsets.all(12),
+                                      child: Text('Cart'),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    tooltip: 'Close cart',
+                                    onPressed: () => Navigator.pop(context),
+                                    icon: const Icon(Icons.close),
+                                  ),
+                                ],
+                              ),
+                              Expanded(
+                                child: SingleChildScrollView(child: cart),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                ),
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
+class PosLoadingIndicator extends StatelessWidget {
+  const PosLoadingIndicator({super.key, required this.label});
+  final String label;
+  @override
+  Widget build(BuildContext context) => Semantics(
+    liveRegion: true,
+    child: Column(
+      children: [
+        const LinearProgressIndicator(),
+        Padding(padding: const EdgeInsets.all(8), child: Text(label)),
+      ],
+    ),
+  );
+}
+
 class _OrderView extends StatefulWidget {
   const _OrderView({required this.controller});
 
@@ -5600,13 +5688,18 @@ class _OrderViewState extends State<_OrderView> {
         );
 
         if (isCompact) {
-          return SingleChildScrollView(
-            child: Column(
-              children: <Widget>[
-                SizedBox(height: 720, child: catalogColumn),
-                const SizedBox(height: 16),
-                cartPanel,
-              ],
+          return CompactOrderWorkspace(
+            catalog: catalogColumn,
+            cartLabel:
+                'View cart (${controller.cartLines.length}) · ${controller.grandTotal.toStringAsFixed(2)}',
+            cart: AnimatedBuilder(
+              animation: controller,
+              builder:
+                  (context, _) => _CartPanel(
+                    controller: controller,
+                    notesController: _notesController,
+                    compact: true,
+                  ),
             ),
           );
         }
@@ -5945,6 +6038,8 @@ class _CartPanel extends StatelessWidget {
     return Column(
       mainAxisSize: compact ? MainAxisSize.min : MainAxisSize.max,
       children: <Widget>[
+        if (controller.isBusy)
+          const PosLoadingIndicator(label: 'Updating cart prices…'),
         compact
             ? SizedBox(
               height: 560,

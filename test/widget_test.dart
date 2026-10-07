@@ -10,6 +10,54 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   GoogleFonts.config.allowRuntimeFetching = false;
 
+  testWidgets(
+    'compact cart stays reachable and opens without catalog scrolling',
+    (tester) async {
+      tester.view.physicalSize = const Size(430, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: CompactOrderWorkspace(
+              catalog: Column(
+                children: [Text('Products'), Expanded(child: SizedBox())],
+              ),
+              cart: Text('Selected cart item'),
+              cartLabel: 'View cart (1) · 2.00',
+            ),
+          ),
+        ),
+      );
+      final button = find.text('View cart (1) · 2.00');
+      expect(tester.getRect(button).bottom, lessThan(800));
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      expect(find.text('Selected cart item'), findsOneWidget);
+      await tester.tap(find.byTooltip('Close cart'));
+      await tester.pumpAndSettle();
+      expect(find.text('Selected cart item'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('pricing and sync progress is visible with an accessible label', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: PosLoadingIndicator(
+            label: 'Loading customer prices and account…',
+          ),
+        ),
+      ),
+    );
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(find.text('Loading customer prices and account…'), findsOneWidget);
+  });
+
   testWidgets('renders the instance setup view', (WidgetTester tester) async {
     await tester.pumpWidget(
       MaterialApp(

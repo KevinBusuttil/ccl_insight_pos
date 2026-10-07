@@ -455,7 +455,16 @@ void main() {
         initialCatalog: PosPreviewData.catalog,
       );
 
-      await controller.selectCustomer(customer);
+      final loadingStates = <bool>[];
+      controller.addListener(
+        () => loadingStates.add(controller.isCustomerLoading),
+      );
+      final selection = controller.selectCustomer(customer);
+      expect(controller.isCustomerLoading, isTrue);
+      expect(controller.isBusy, isTrue);
+      await selection;
+      expect(controller.isCustomerLoading, isFalse);
+      expect(loadingStates, containsAllInOrder([true, false]));
 
       expect(apiClient.catalogRequests, <String?>['AX-1001']);
       expect(controller.selectedCustomer?.id, customer.id);
