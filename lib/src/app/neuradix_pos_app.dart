@@ -252,7 +252,7 @@ class NeuradixShellHeaderPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _ShellHeader(
+    return PosShellHeader(
       brandName: brandName,
       onRefresh: () async {},
       onEditInstance: () async {},
@@ -5439,6 +5439,7 @@ class _RailButton extends StatelessWidget {
 
 class PosShellHeader extends StatelessWidget {
   const PosShellHeader({
+    super.key,
     required this.brandName,
     required this.onRefresh,
     required this.onEditInstance,
@@ -6388,39 +6389,78 @@ class _CustomersViewState extends State<_CustomersView> {
     return Column(
       children: <Widget>[
         _SectionCard(
-          child: Row(
-            children: <Widget>[
-              Expanded(
-                child: Text(
-                  'Customers',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-              ),
-              Expanded(
-                flex: 2,
-                child: TextField(
-                  controller: _searchController,
-                  onChanged: controller.updateCustomerSearch,
-                  decoration: const InputDecoration(
-                    hintText: 'Enter customer name',
-                    prefixIcon: Icon(Icons.search),
+          child:
+              MediaQuery.sizeOf(context).width < 700
+                  ? Column(
+                    children: [
+                      TextField(
+                        controller: _searchController,
+                        onChanged: controller.updateCustomerSearch,
+                        decoration: const InputDecoration(
+                          hintText: 'Search customers',
+                          prefixIcon: Icon(Icons.search),
+                        ),
+                      ),
+                      Wrap(
+                        spacing: 8,
+                        children: [
+                          TextButton(
+                            onPressed:
+                                () => _showCreateCustomerDialog(
+                                  context,
+                                  controller,
+                                ),
+                            child: const Text('Create Customer'),
+                          ),
+                          TextButton(
+                            onPressed:
+                                () => _showLookupCustomerDialog(
+                                  context,
+                                  controller,
+                                ),
+                            child: const Text('Lookup Mobile'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  )
+                  : Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Text(
+                          'Customers',
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                      ),
+                      Expanded(
+                        flex: 2,
+                        child: TextField(
+                          controller: _searchController,
+                          onChanged: controller.updateCustomerSearch,
+                          decoration: const InputDecoration(
+                            hintText: 'Enter customer name',
+                            prefixIcon: Icon(Icons.search),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      ElevatedButton.icon(
+                        onPressed:
+                            () =>
+                                _showCreateCustomerDialog(context, controller),
+                        icon: const Icon(Icons.person_add_alt_1),
+                        label: const Text('Create Customer'),
+                      ),
+                      const SizedBox(width: 12),
+                      OutlinedButton.icon(
+                        onPressed:
+                            () =>
+                                _showLookupCustomerDialog(context, controller),
+                        icon: const Icon(Icons.search_off_outlined),
+                        label: const Text('Lookup Mobile'),
+                      ),
+                    ],
                   ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              ElevatedButton.icon(
-                onPressed: () => _showCreateCustomerDialog(context, controller),
-                icon: const Icon(Icons.person_add_alt_1),
-                label: const Text('Create Customer'),
-              ),
-              const SizedBox(width: 12),
-              OutlinedButton.icon(
-                onPressed: () => _showLookupCustomerDialog(context, controller),
-                icon: const Icon(Icons.search_off_outlined),
-                label: const Text('Lookup Mobile'),
-              ),
-            ],
-          ),
         ),
         const SizedBox(height: 14),
         Expanded(
@@ -6430,13 +6470,13 @@ class _CustomersViewState extends State<_CustomersView> {
                     ? const Center(child: Text('No customer found'))
                     : GridView.builder(
                       itemCount: controller.customers.length,
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 2,
-                            mainAxisSpacing: 12,
-                            crossAxisSpacing: 12,
-                            childAspectRatio: 2.9,
-                          ),
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount:
+                            MediaQuery.sizeOf(context).width < 700 ? 1 : 2,
+                        mainAxisSpacing: 12,
+                        crossAxisSpacing: 12,
+                        childAspectRatio: 2.9,
+                      ),
                       itemBuilder: (BuildContext context, int index) {
                         final customer = controller.customers[index];
                         return _CustomerCard(
@@ -6444,8 +6484,11 @@ class _CustomersViewState extends State<_CustomersView> {
                           selected:
                               controller.selectedCustomer?.id == customer.id,
                           onTap: () async {
-                            await controller.selectCustomer(customer);
+                            final selection = controller.selectCustomer(
+                              customer,
+                            );
                             controller.selectView('Order');
+                            await selection;
                           },
                         );
                       },
