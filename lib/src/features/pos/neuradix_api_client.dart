@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
 
 import '../hosted/hosted_models.dart';
 import 'pos_debug_log.dart';
@@ -27,6 +28,24 @@ class NeuradixApiClient {
 
   final String baseUrl;
   final http.Client _httpClient;
+
+  String? _csrfToken;
+
+  Future<void> _prepareBrowserSession() async {
+    if (!kIsWeb) {
+      return;
+    }
+    final response = await _httpClient.get(
+      _buildUri('api/method/neuradix.api.v1.bootstrap.get_session_token'),
+    );
+    _csrfToken =
+        '${_unwrapMessageMap(_decodeResponse(response))["csrf_token"] ?? ""}';
+    if (_csrfToken!.isEmpty) {
+      throw const NeuradixApiException(
+        'Unable to establish a secure browser session.',
+      );
+    }
+  }
 
   String? _apiKey;
   String? _apiSecret;
@@ -67,8 +86,10 @@ class NeuradixApiClient {
     required String username,
     required String password,
   }) async {
+    await _prepareBrowserSession();
     final response = await _httpClient.post(
       _buildUri('api/method/neuradix.api.v1.bootstrap.login'),
+      headers: {if (_csrfToken != null) 'X-Frappe-CSRF-Token': _csrfToken!},
       body: <String, String>{'usr': username, 'pwd': password},
     );
 
@@ -395,6 +416,7 @@ class NeuradixApiClient {
       'neuradix.api.v1.customers.get_customers',
       queryParameters: <String, String>{
         'hub_manager': hubManager,
+        'limit': '10000',
         if (searchText.trim().isNotEmpty) 'search_text': searchText.trim(),
       },
     );
@@ -497,6 +519,16 @@ class NeuradixApiClient {
               PosCatalogGroup.fromApi(Map<String, dynamic>.from(row as Map)),
         )
         .toList(growable: false);
+  }
+
+  Future<Map<String, dynamic>> quoteCart(Map<String, Object?> cart) async {
+    return _unwrapMessageMap(
+      await _callMethod(
+        'neuradix.api.v1.catalog.quote_cart',
+        method: 'POST',
+        body: <String, String>{'payload': jsonEncode(cart)},
+      ),
+    );
   }
 
   Future<List<PosVisitPlanEntry>> getWeekPlan({
@@ -882,13 +914,17 @@ class NeuradixApiClient {
     Map<String, String>? body,
     String method = 'GET',
     bool authenticated = true,
-  }) {
+  }) async {
+    if (method == 'POST' && kIsWeb) {
+      await _prepareBrowserSession();
+    }
     final uri = _buildUri(
       'api/method/$methodName',
       queryParameters: queryParameters,
     );
     final headers = <String, String>{
       'Accept': 'application/json',
+      if (_csrfToken != null) 'X-Frappe-CSRF-Token': _csrfToken!,
       if (authenticated && _apiKey != null && _apiSecret != null)
         'Authorization': 'token $_apiKey:$_apiSecret',
     };

@@ -34,11 +34,17 @@ class PosCacheRepository {
       SELECT customer_id, display_name, mobile_no, payload_json
       FROM customers
       WHERE (? = '')
+         OR LOWER(customer_id) LIKE ?
          OR LOWER(display_name) LIKE ?
          OR LOWER(COALESCE(mobile_no, '')) LIKE ?
       ORDER BY display_name ASC
       ''',
-      <Object?>[normalizedSearch, '%$normalizedSearch%', '%$normalizedSearch%'],
+      <Object?>[
+        normalizedSearch,
+        '%$normalizedSearch%',
+        '%$normalizedSearch%',
+        '%$normalizedSearch%',
+      ],
     );
     final customers = rows
         .map((Map<String, Object?> row) => PosCustomer.fromRow(row))

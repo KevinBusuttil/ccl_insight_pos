@@ -341,6 +341,8 @@ void main() {
   test('keeps the medium-tablet order view in side-by-side mode', () {
     expect(posOrderUsesCompactLayout(1039), isTrue);
     expect(posOrderUsesCompactLayout(1040), isFalse);
+    expect(posOrderUsesCompactLayout(1280, maxHeight: 500), isTrue);
+    expect(posOrderUsesCompactLayout(1280, maxHeight: 800), isFalse);
     expect(posOrderCartPanelWidth(1039), double.infinity);
     expect(posOrderCartPanelWidth(1100), 340);
     expect(posOrderCartPanelWidth(1280), 405);

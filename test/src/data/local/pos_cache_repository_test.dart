@@ -23,6 +23,9 @@ void main() {
     expect(customers, hasLength(1));
     expect(customers.single.displayName, 'Cassar Retail Valletta');
 
+    final byId = await repository.searchCustomers('cust-002');
+    expect(byId.single.id, 'CUST-002');
+
     final catalog = await repository.readCatalog(searchText: 'espresso');
     expect(catalog, hasLength(1));
     expect(catalog.single.items.single.itemCode, 'COFFEE-002');

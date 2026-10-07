@@ -32,6 +32,10 @@ import '../features/pos/pos_models.dart';
 import '../features/pos/neuradix_api_client.dart';
 import '../theme/neuradix_theme.dart';
 
+const String _dedicatedBenchUrl = String.fromEnvironment(
+  'NEURADIX_DEDICATED_URL',
+);
+
 const String _compiledDefaultInstanceUrl = String.fromEnvironment(
   'NEURADIX_DEFAULT_URL',
   defaultValue: 'http://neuradix-cassar.localhost:8008',
@@ -49,8 +53,11 @@ const String _defaultUatPassword = String.fromEnvironment(
   defaultValue: 'NeuradixDemo!2026',
 );
 
-String get _defaultInstanceUrl =>
-    normalizeBenchUrlForRuntime(_compiledDefaultInstanceUrl);
+String get _defaultInstanceUrl => normalizeBenchUrlForRuntime(
+  _dedicatedBenchUrl.isNotEmpty
+      ? _dedicatedBenchUrl
+      : _compiledDefaultInstanceUrl,
+);
 
 String get _defaultCloudBaseUrl =>
     normalizeBenchUrlForRuntime(neuradixDefaultCloudBaseUrl);
@@ -88,7 +95,10 @@ bool _sameBootstrapConfig(BootstrapConfig left, BootstrapConfig right) {
   return true;
 }
 
-bool posOrderUsesCompactLayout(double maxWidth) => maxWidth < 1040;
+bool posOrderUsesCompactLayout(
+  double maxWidth, {
+  double maxHeight = double.infinity,
+}) => maxWidth < 1040 || maxHeight < 650;
 
 double posOrderCartPanelWidth(double maxWidth) {
   if (posOrderUsesCompactLayout(maxWidth)) {
@@ -324,7 +334,14 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
   @override
   void initState() {
     super.initState();
-    _database = widget.database ?? NeuradixDatabase();
+    _database =
+        widget.database ??
+        NeuradixDatabase(
+          databaseName:
+              _dedicatedBenchUrl.isEmpty
+                  ? 'neuradix_pos.db'
+                  : 'neuradix_ccl_uat.db',
+        );
     _initialize();
   }
 
@@ -583,7 +600,9 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
     PosLoginSession? session,
   ) {
     if (config == null) {
-      return _AppStage.modeChooser;
+      return _dedicatedBenchUrl.isEmpty
+          ? _AppStage.modeChooser
+          : _AppStage.instanceSetup;
     }
     if (config.deploymentMode == 'neuradix_cloud') {
       return session == null ? _AppStage.hostedAuth : _AppStage.hostedShell;
@@ -642,7 +661,8 @@ class _NeuradixPosAppState extends State<NeuradixPosApp> {
   }
 
   Future<void> _saveInstanceConfig(String instanceUrl) async {
-    final trimmedUrl = instanceUrl.trim();
+    final trimmedUrl =
+        _dedicatedBenchUrl.isNotEmpty ? _dedicatedBenchUrl : instanceUrl.trim();
     final config = BootstrapConfig(
       baseUrl: trimmedUrl,
       useSsl: trimmedUrl.startsWith('https://'),
@@ -1983,12 +2003,15 @@ class _InstanceSetupViewState extends State<_InstanceSetupView> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  'Use the bench URL served by `bench start`. Same-machine development should use `http://neuradix-cassar.localhost:8008` or `http://127.0.0.1:8008`. Use a LAN IP only when another device needs to reach this bench.',
+                  _dedicatedBenchUrl.isNotEmpty
+                      ? 'Connect to the CassarCamilleri test server. Customer agreement prices require an online connection.'
+                      : 'Enter your dedicated bench URL.',
                   style: Theme.of(context).textTheme.bodyLarge,
                 ),
                 const SizedBox(height: 24),
                 TextField(
                   controller: _controller,
+                  readOnly: _dedicatedBenchUrl.isNotEmpty,
                   decoration: const InputDecoration(
                     labelText: 'Instance URL',
                     hintText: 'http://neuradix-cassar.localhost:8008',
@@ -2011,10 +2034,11 @@ class _InstanceSetupViewState extends State<_InstanceSetupView> {
                       onPressed: () => widget.onSave(_controller.text),
                       child: const Text('Save Instance'),
                     ),
-                    OutlinedButton(
-                      onPressed: widget.onPreview,
-                      child: const Text('Preview Tablet UI'),
-                    ),
+                    if (_dedicatedBenchUrl.isEmpty)
+                      OutlinedButton(
+                        onPressed: widget.onPreview,
+                        child: const Text('Preview Tablet UI'),
+                      ),
                   ],
                 ),
               ],
@@ -2029,7 +2053,9 @@ class _InstanceSetupViewState extends State<_InstanceSetupView> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 Text(
-                  'What this rebuild keeps',
+                  _dedicatedBenchUrl.isNotEmpty
+                      ? 'CassarCamilleri UAT'
+                      : 'Neuradix POS',
                   style: Theme.of(context).textTheme.headlineMedium,
                 ),
                 const SizedBox(height: 18),
@@ -2042,11 +2068,10 @@ class _InstanceSetupViewState extends State<_InstanceSetupView> {
                 ),
                 const _BulletLine(
                   text:
-                      'Parked orders, queued replay, and SQLite local persistence',
+                      'Park orders locally; review current prices before submission',
                 ),
                 const _BulletLine(
-                  text:
-                      'Clean `neuradix` / `neuradix_cassarcamilleri` API boundary',
+                  text: 'Customer agreement prices calculated by the server',
                 ),
               ],
             ),
@@ -5479,8 +5504,14 @@ class _OrderViewState extends State<_OrderView> {
     final controller = widget.controller;
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        final isCompact = posOrderUsesCompactLayout(constraints.maxWidth);
-        final cartPanelWidth = posOrderCartPanelWidth(constraints.maxWidth);
+        final isCompact = posOrderUsesCompactLayout(
+          constraints.maxWidth,
+          maxHeight: constraints.maxHeight,
+        );
+        final cartPanelWidth =
+            isCompact
+                ? double.infinity
+                : posOrderCartPanelWidth(constraints.maxWidth);
         final catalogColumn = Column(
           children: <Widget>[
             _SectionCard(
@@ -5512,23 +5543,28 @@ class _OrderViewState extends State<_OrderView> {
                   const SizedBox(height: 16),
                   _SelectedCustomerBanner(controller: controller),
                   const SizedBox(height: 14),
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: <Widget>[
-                      ChoiceChip(
-                        label: const Text('All'),
-                        selected: controller.selectedCategory == null,
-                        onSelected: (_) => controller.selectCategory(null),
+                  SizedBox(
+                    height: 90,
+                    child: SingleChildScrollView(
+                      child: Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: <Widget>[
+                          ChoiceChip(
+                            label: const Text('All'),
+                            selected: controller.selectedCategory == null,
+                            onSelected: (_) => controller.selectCategory(null),
+                          ),
+                          for (final category in controller.allCategories)
+                            ChoiceChip(
+                              label: Text(category),
+                              selected: controller.selectedCategory == category,
+                              onSelected:
+                                  (_) => controller.selectCategory(category),
+                            ),
+                        ],
                       ),
-                      for (final category in controller.allCategories)
-                        ChoiceChip(
-                          label: Text(category),
-                          selected: controller.selectedCategory == category,
-                          onSelected:
-                              (_) => controller.selectCategory(category),
-                        ),
-                    ],
+                    ),
                   ),
                 ],
               ),
@@ -5864,7 +5900,9 @@ class _CatalogItemCard extends StatelessWidget {
                   children: <Widget>[
                     Expanded(
                       child: Text(
-                        item.price.toStringAsFixed(2),
+                        item.pricingAvailable
+                            ? item.price.toStringAsFixed(2)
+                            : 'Price unavailable',
                         style: Theme.of(
                           context,
                         ).textTheme.headlineMedium?.copyWith(fontSize: 20),
@@ -6032,7 +6070,9 @@ class _CartPanel extends StatelessWidget {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            '${line.price.toStringAsFixed(2)} each',
+                            controller.hasCurrentPrices
+                                ? '${line.price.toStringAsFixed(2)} per ${line.uom}'
+                                : 'Awaiting customer prices',
                             style: Theme.of(context).textTheme.bodyMedium,
                           ),
                           if (line.notes.trim().isNotEmpty)

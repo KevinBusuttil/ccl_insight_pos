@@ -349,6 +349,8 @@ class PosCatalogItem {
     required this.imageUrl,
     this.imageVersion = '',
     this.localImagePath = '',
+    this.defaultUom = 'Unit',
+    this.pricingAvailable = true,
     required this.price,
     required this.stockQty,
     required this.taxRows,
@@ -362,6 +364,8 @@ class PosCatalogItem {
   final String imageUrl;
   final String imageVersion;
   final String localImagePath;
+  final String defaultUom;
+  final bool pricingAvailable;
   final double price;
   final double stockQty;
   final List<Map<String, dynamic>> taxRows;
@@ -376,6 +380,8 @@ class PosCatalogItem {
       imageUrl: '${json['image'] ?? ''}',
       imageVersion: '${json['image_version'] ?? ''}',
       localImagePath: '${json['local_image_path'] ?? ''}',
+      defaultUom: '${json['default_uom'] ?? 'Unit'}',
+      pricingAvailable: json['pricing_available'] != false,
       price: double.tryParse('${json['product_price'] ?? 0}') ?? 0,
       stockQty: double.tryParse('${json['stock_qty'] ?? 0}') ?? 0,
       taxRows: ((json['tax'] as List?) ?? const <dynamic>[])
@@ -420,6 +426,8 @@ class PosCatalogItem {
         'image_version': imageVersion,
         'local_image_path': localImagePath,
         'product_price': price,
+        'default_uom': defaultUom,
+        'pricing_available': pricingAvailable,
         'stock_qty': stockQty,
         'tax': taxRows,
         'combo_items': comboItems,
@@ -442,6 +450,8 @@ class PosCatalogItem {
       imageUrl: imageUrl ?? this.imageUrl,
       imageVersion: imageVersion ?? this.imageVersion,
       localImagePath: localImagePath ?? this.localImagePath,
+      defaultUom: defaultUom,
+      pricingAvailable: pricingAvailable,
       price: price ?? this.price,
       stockQty: stockQty ?? this.stockQty,
       taxRows: taxRows,
@@ -720,6 +730,7 @@ class CartLine {
     required this.price,
     required this.qty,
     this.notes = '',
+    this.uom = 'Unit',
     this.taxRows = const <Map<String, dynamic>>[],
   });
 
@@ -729,6 +740,7 @@ class CartLine {
   final double price;
   final int qty;
   final String notes;
+  final String uom;
   final List<Map<String, dynamic>> taxRows;
 
   double get total => price * qty;
@@ -749,6 +761,7 @@ class CartLine {
       price: price ?? this.price,
       qty: qty ?? this.qty,
       notes: notes ?? this.notes,
+      uom: uom,
       taxRows: taxRows ?? this.taxRows,
     );
   }
@@ -760,6 +773,7 @@ class CartLine {
       'group_name': groupName,
       'rate': price,
       'qty': qty,
+      'uom': uom,
       'notes': notes,
       'tax': taxRows,
     };

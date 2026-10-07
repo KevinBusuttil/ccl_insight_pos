@@ -108,10 +108,109 @@ class PosHomeController extends ChangeNotifier {
   String get selectedPlanDate => _selectedPlanDate;
   String? get lastDaySyncAt => _lastDaySyncAt;
   String? get statusMessage => _statusMessage;
-  bool get isBusy => _busy;
+  bool get isBusy => _busy || _quoteBusy;
   bool get isOffline => _offline;
   bool get isPreview => session.previewMode;
   bool get selectedCustomerOfflineReady => _selectedCustomerOfflineReady;
+
+  bool get _usesServerQuotes =>
+      bootstrap.features['server_cart_quotes'] == true && !isPreview;
+  bool get hasCurrentPrices => !_usesServerQuotes || _cartQuote != null;
+  Map<String, dynamic>? _cartQuote;
+  int _quoteRevision = 0;
+  bool _quoteBusy = false;
+  String? _quotedOrderClientId;
+
+  Future<bool> refreshCartQuote() async {
+    final revision = ++_quoteRevision;
+    _cartQuote = null;
+    if (!_usesServerQuotes || _cartLines.isEmpty) {
+      _quoteBusy = false;
+      notifyListeners();
+      return true;
+    }
+    if (_selectedCustomer == null || apiClient == null) {
+      _statusMessage = 'Select a customer to fetch agreement prices.';
+      notifyListeners();
+      return false;
+    }
+    _quoteBusy = true;
+    notifyListeners();
+    try {
+      final quote = await apiClient!.quoteCart(<String, Object?>{
+        'customer': _selectedCustomer!.id,
+        'items': _cartLines.map((line) => line.toJson()).toList(),
+      });
+      if (revision != _quoteRevision) {
+        return false;
+      }
+      final rows = (quote['items'] as List).cast<Map>();
+      if (rows.length != _cartLines.length) {
+        throw const NeuradixApiException('Incomplete pricing quote.');
+      }
+      for (var index = 0; index < rows.length; index++) {
+        if (rows[index]['item_code'] != _cartLines[index].itemCode) {
+          throw const NeuradixApiException(
+            'Pricing quote does not match the cart.',
+          );
+        }
+        _cartLines[index] = _cartLines[index].copyWith(
+          price: (rows[index]['rate'] as num).toDouble(),
+        );
+      }
+      _cartQuote = quote;
+      _offline = false;
+      _statusMessage = 'Customer agreement prices updated.';
+      return true;
+    } on Exception catch (error) {
+      if (revision == _quoteRevision) {
+        _statusMessage = 'Prices unavailable. Reconnect and retry. $error';
+      }
+      return false;
+    } finally {
+      if (revision == _quoteRevision) {
+        _quoteBusy = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> _submitQuotedOrder() async {
+    if (isBusy) {
+      return;
+    }
+    if (!await refreshCartQuote()) return;
+    final validation = _validateOrder();
+    if (validation != null) {
+      _statusMessage = validation;
+      notifyListeners();
+      return;
+    }
+    _busy = true;
+    notifyListeners();
+    try {
+      final payload = _buildOrderPayload(customIsParked: false);
+      _quotedOrderClientId ??= '${payload['client_order_id']}';
+      payload['client_order_id'] = _quotedOrderClientId;
+      payload['quote_token'] = _cartQuote!['quote_token'];
+      payload['transaction_date'] = _cartQuote!['transaction_date'];
+      payload['delivery_date'] = _cartQuote!['transaction_date'];
+      final remote = await apiClient!.submitSalesOrder(payload);
+      if (remote.isEmpty) {
+        throw const NeuradixApiException('Server did not confirm the order.');
+      }
+      _resetComposer();
+      _quotedOrderClientId = null;
+      _cartQuote = null;
+      _statusMessage = 'Sales order $remote submitted successfully.';
+    } on Exception catch (error) {
+      _cartQuote = null;
+      _statusMessage = 'Order not confirmed. Review prices and retry. $error';
+    } finally {
+      _busy = false;
+      notifyListeners();
+    }
+  }
 
   List<String> get currentWeekDates {
     final weekStart = _weekStartForDate(_selectedPlanDate);
@@ -128,6 +227,9 @@ class PosHomeController extends ChangeNotifier {
   );
 
   double get taxTotal {
+    if (_usesServerQuotes && _cartQuote != null) {
+      return (_cartQuote!['tax_total'] as num).toDouble();
+    }
     return _taxRows.fold<double>(0, (double total, Map<String, dynamic> row) {
       final rate = double.tryParse('${row['rate'] ?? 0}') ?? 0;
       if (rate <= 0) {
@@ -137,7 +239,10 @@ class PosHomeController extends ChangeNotifier {
     });
   }
 
-  double get grandTotal => subtotal + taxTotal;
+  double get grandTotal =>
+      _usesServerQuotes && _cartQuote != null
+          ? (_cartQuote!['grand_total'] as num).toDouble()
+          : subtotal + taxTotal;
 
   Future<void> hydrate() async {
     if (_allCustomers.isEmpty) {
@@ -240,7 +345,10 @@ class PosHomeController extends ChangeNotifier {
   }
 
   Future<void> selectCustomer(PosCustomer customer) async {
+    _quotedOrderClientId = null;
     _selectedCustomer = customer;
+    _cartQuote = null;
+    ++_quoteRevision;
     _selectedPolicy =
         _policyByCustomer[customer.id] ??
         PosCustomerPolicy(
@@ -269,9 +377,11 @@ class PosHomeController extends ChangeNotifier {
         final liveStatement = await apiClient!.getIssueStatement(customer.id);
         final liveCatalog = await apiClient!.getCatalog(
           customer:
-              customer.customerCode.isNotEmpty
-                  ? customer.customerCode
-                  : customer.id,
+              _usesServerQuotes
+                  ? customer.id
+                  : (customer.customerCode.isNotEmpty
+                      ? customer.customerCode
+                      : customer.id),
         );
         _policyByCustomer[customer.id] = livePolicy;
         _issueStatements[customer.id] = liveStatement;
@@ -306,7 +416,13 @@ class PosHomeController extends ChangeNotifier {
         _applyCatalogFilters();
       } on Exception {
         _offline = true;
-        await _applyOfflineCatalogForSelectedCustomer();
+        if (_usesServerQuotes) {
+          _activeCatalogSourceGroups = [];
+          _applyCatalogFilters();
+          _statusMessage = 'Customer prices unavailable. Reconnect and retry.';
+        } else {
+          await _applyOfflineCatalogForSelectedCustomer();
+        }
       } finally {
         _busy = false;
       }
@@ -314,6 +430,7 @@ class PosHomeController extends ChangeNotifier {
       await _applyOfflineCatalogForSelectedCustomer();
     }
 
+    if (_usesServerQuotes) await refreshCartQuote();
     notifyListeners();
   }
 
@@ -644,7 +761,15 @@ class PosHomeController extends ChangeNotifier {
     }
   }
 
-  void addItem(PosCatalogItem item) {
+  Future<void> addItem(PosCatalogItem item) async {
+    _quotedOrderClientId = null;
+    if (_usesServerQuotes &&
+        (_selectedCustomer == null || !item.pricingAvailable)) {
+      _statusMessage =
+          'Select a customer and an item with available agreement pricing.';
+      notifyListeners();
+      return;
+    }
     final index = _cartLines.indexWhere(
       (CartLine line) => line.itemCode == item.itemCode,
     );
@@ -659,16 +784,19 @@ class PosHomeController extends ChangeNotifier {
           groupName: item.groupName,
           displayName: item.displayName,
           price: item.price,
+          uom: item.defaultUom,
           qty: 1,
           taxRows: item.taxRows,
         ),
       );
     }
     _statusMessage = '${item.displayName} added to the cart.';
+    if (_usesServerQuotes) await refreshCartQuote();
     notifyListeners();
   }
 
-  void changeLineQuantity(CartLine line, int delta) {
+  Future<void> changeLineQuantity(CartLine line, int delta) async {
+    _quotedOrderClientId = null;
     final index = _cartLines.indexWhere(
       (CartLine entry) => entry.itemCode == line.itemCode,
     );
@@ -681,6 +809,7 @@ class PosHomeController extends ChangeNotifier {
     } else {
       _cartLines[index] = _cartLines[index].copyWith(qty: nextQty);
     }
+    if (_usesServerQuotes) await refreshCartQuote();
     notifyListeners();
   }
 
@@ -819,6 +948,7 @@ class PosHomeController extends ChangeNotifier {
             price: double.tryParse('${map['rate'] ?? 0}') ?? 0,
             qty: int.tryParse('${map['qty'] ?? 0}') ?? 0,
             notes: '${map['notes'] ?? ''}',
+            uom: '${map['uom'] ?? 'Unit'}',
             taxRows: ((map['tax'] as List?) ?? const <dynamic>[])
                 .map((dynamic row) => Map<String, dynamic>.from(row as Map))
                 .toList(growable: false),
@@ -830,6 +960,9 @@ class PosHomeController extends ChangeNotifier {
     }
     _selectedView = 'Order';
     _statusMessage = 'Loaded parked order ${order.clientOrderId}.';
+    if (_usesServerQuotes) {
+      await refreshCartQuote();
+    }
     notifyListeners();
   }
 
@@ -841,6 +974,10 @@ class PosHomeController extends ChangeNotifier {
   }
 
   Future<void> submitCurrentOrder() async {
+    if (_usesServerQuotes) {
+      await _submitQuotedOrder();
+      return;
+    }
     final validationMessage = _validateOrder();
     if (validationMessage != null) {
       _statusMessage = validationMessage;
@@ -1035,9 +1172,11 @@ class PosHomeController extends ChangeNotifier {
     if (customer == null) {
       return null;
     }
-    return customer.customerCode.isNotEmpty
-        ? customer.customerCode
-        : customer.id;
+    return _usesServerQuotes
+        ? customer.id
+        : (customer.customerCode.isNotEmpty
+            ? customer.customerCode
+            : customer.id);
   }
 
   Map<String, Object?> _buildOrderPayload({required bool customIsParked}) {
@@ -1252,7 +1391,8 @@ class PosHomeController extends ChangeNotifier {
                 (PosCatalogItem item) =>
                     normalizedSearch.isEmpty ||
                     group.groupName.toLowerCase().contains(normalizedSearch) ||
-                    item.displayName.toLowerCase().contains(normalizedSearch),
+                    item.displayName.toLowerCase().contains(normalizedSearch) ||
+                    item.itemCode.toLowerCase().contains(normalizedSearch),
               )
               .toList(growable: false);
           return group.copyWith(items: items);

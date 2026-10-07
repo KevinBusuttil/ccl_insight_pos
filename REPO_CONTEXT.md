@@ -2,6 +2,12 @@
 
 This repository holds the new Flutter `neuradix_pos` client.
 
+## Dedicated Cassar UAT pricing plan — 2026-10-07
+- Plan: `/Users/trek-matrix/Documents/ChatGPT/Marsovin-ERP-test/ops/POS_TRADE_AGREEMENT_PLAN.md`; target restored UAT `http://209.38.46.169` on dedicated_backend mode, with current administrator IP allowlist.
+- `start_macos.sh` accepts NEURADIX_DEFAULT_URL; stored instance URLs/cache must also be switched and isolated by site.
+- `pos_home_controller.dart`: selectCustomer fetches customer catalog, while addItem/changeLineQuantity retain cached unit prices. Customer/quantity/UOM/cart/date quotes and submitted-total parity are planned, not implemented by this audit.
+- Trade-agreement rules remain server-owned through Neuradix and the configured ERPNext/Insight lifecycle. Offline stale/context-mismatched prices require explicit provisional-order and re-quote handling.
+
 ## Backend Boundary
 - This is one of three independent Flutter clients served by the single Cassar backend site in `/Users/trek-matrix/Work/Kevins_work/neuradix-bench`.
 - It must point to the same site URL as CC Connect and Neuradix Cassar Operations; it does not own or require another Frappe bench.
@@ -75,3 +81,12 @@ This repository holds the new Flutter `neuradix_pos` client.
 - The live WebSocket relay worker and manual text-code trusted-device pairing flow are implemented and covered by unit tests. QR camera pairing, snapshot/anti-entropy catch-up, operator PINs, and SQLCipher database encryption remain release-blocking follow-up phases
 - Relay reliability uses application ping/pong heartbeats, stale-socket replacement, connection-specific callbacks, forced reconnection from Refresh, and automatic reconnection when the app resumes. Refresh reports when no other trusted register is online instead of claiming convergence; the stateless relay still requires devices to overlap online.
 - The current release-signoff evidence is the 18-sale two-emulator matrix in `docs/test-results/local_multi_shop_manual_test_report_2026-09-29.md`, `docs/test-results/local_multi_shop_automated_results_2026-09-29.md`, and the associated machine-readable result/audit files. Older two-emulator and server reports remain historical evidence only.
+
+## Dedicated CassarCamilleri UAT build
+- Build define `NEURADIX_DEDICATED_URL=http://209.38.46.169` fixes the bench and uses separate `neuradix_ccl_uat.db`. Android adds `.ccl_uat` application ID and UAT label; never embed a password.
+- `lib/src/features/pos/neuradix_api_client.dart`: current-session browser CSRF and server cart quotes.
+- `lib/src/features/pos/pos_home_controller.dart`: `server_cart_quotes` feature; re-quote add/quantity/customer/parked restore, ignore stale async responses, accepted quote submission with server date, preserve failed cart and stable retry ID. Agreement order submission requires online pricing.
+- `lib/src/features/pos/pos_models.dart`: default UOM and explicit pricing availability survive cache; cart sends actual UOM.
+- `lib/src/data/local/pos_cache_repository.dart`: customer ID/name/mobile search.
+- `test/src/features/pos/{pos_home_controller,neuradix_api_client}_test.dart` and cache tests cover dedicated integration and regressions. Use ./run_tests.sh; format with its selected Dart version.
+- UAT web path `/pos/`; macOS build requires user acceptance of current Xcode license.

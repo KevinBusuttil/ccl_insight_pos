@@ -8,6 +8,40 @@ import 'package:neuradix_pos/src/features/pos/neuradix_api_client.dart';
 import 'package:neuradix_pos/src/features/pos/pos_models.dart';
 
 void main() {
+  test(
+    'cart quotes post canonical customer, quantity and unit and unwrap server totals',
+    () async {
+      final client = NeuradixApiClient(
+        baseUrl: 'http://uat',
+        httpClient: MockClient((request) async {
+          expect(request.method, 'POST');
+          expect(
+            request.url.path,
+            '/api/method/neuradix.api.v1.catalog.quote_cart',
+          );
+          final form = Uri.splitQueryString(request.body);
+          final cart = jsonDecode(form['payload']!) as Map;
+          expect(cart['customer'], 'C001694');
+          expect((cart['items'] as List).single['uom'], 'Box');
+          return http.Response(
+            jsonEncode({
+              'message': {'quote_token': 'verified', 'grand_total': 12.0},
+            }),
+            200,
+          );
+        }),
+      );
+      final quote = await client.quoteCart({
+        'customer': 'C001694',
+        'items': [
+          {'item_code': 'X', 'qty': 12, 'uom': 'Box'},
+        ],
+      });
+      expect(quote['quote_token'], 'verified');
+      expect(quote['grand_total'], 12);
+    },
+  );
+
   test('login surfaces invalid backend credentials message on 401', () async {
     final client = NeuradixApiClient(
       baseUrl: 'http://neuradix-cassar.localhost:8008',

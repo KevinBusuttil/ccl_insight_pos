@@ -70,6 +70,40 @@ class FakeNeuradixApiClient extends NeuradixApiClient {
   bool failSubmissions;
   bool failCustomerContextRequests;
 
+  bool failQuotes = false;
+  final List<Map<String, Object?>> quoteRequests = [];
+  @override
+  Future<Map<String, dynamic>> quoteCart(Map<String, Object?> cart) async {
+    quoteRequests.add(cart);
+    if (failQuotes) throw const NeuradixApiException('pricing unavailable');
+    final rows = (cart['items'] as List).cast<Map>();
+    final items =
+        rows
+            .map(
+              (row) => <String, Object?>{
+                ...Map<String, Object?>.from(row),
+                'rate':
+                    cart['customer'] == 'CUST-002'
+                        ? 4.0
+                        : ((row['qty'] as num) >= 2 ? 5.0 : 10.0),
+              },
+            )
+            .toList();
+    final net = items.fold<double>(
+      0,
+      (sum, row) =>
+          sum +
+          (row['rate'] as num).toDouble() * (row['qty'] as num).toDouble(),
+    );
+    return {
+      'items': items,
+      'net_total': net,
+      'tax_total': net * 0.18,
+      'grand_total': net * 1.18,
+      'quote_token': 'test-token',
+    };
+  }
+
   @override
   Future<List<PosCustomer>> getCustomers({
     required String hubManager,
@@ -718,6 +752,62 @@ void main() {
       expect(controller.isOffline, isTrue);
       expect(controller.catalogGroups, isEmpty);
       expect(controller.statusMessage, contains('Plan & Sync'));
+    },
+  );
+  test(
+    'dedicated pricing re-quotes quantity and customer; failed quotes preserve cart',
+    () async {
+      final harness = await _openHarness();
+      addTearDown(() async => harness.database.close());
+      final api = FakeNeuradixApiClient(
+        customers: PosPreviewData.customers,
+        defaultCatalog: PosPreviewData.catalog,
+        history: [],
+        account: PosPreviewData.account,
+        taxes: [],
+        policies: PosPreviewData.policyByCustomer,
+        issueStatements: {
+          'CUST-001': _issueStatement('CUST-001'),
+          'CUST-002': _issueStatement('CUST-002'),
+        },
+      );
+      final controller = PosHomeController(
+        instanceUrl: 'http://uat',
+        bootstrap: PosBootstrapBundle.fromPlatform({
+          'features': {'server_cart_quotes': true},
+          'minimum_order_amount': 0,
+        }),
+        session: const PosLoginSession(
+          username: 'rep',
+          email: 'rep@example.com',
+          apiKey: 'k',
+          apiSecret: 's',
+          hubManager: 'rep',
+        ),
+        cacheRepository: harness.cacheRepository,
+        orderRepository: harness.orderRepository,
+        apiClient: api,
+      );
+      final item = PosPreviewData.catalog.first.items.first;
+      await controller.addItem(item);
+      expect(controller.cartLines, isEmpty);
+      await controller.selectCustomer(PosPreviewData.customers.first);
+      await controller.addItem(item);
+      expect(controller.cartLines.single.price, 10);
+      await controller.changeLineQuantity(controller.cartLines.single, 1);
+      expect(controller.cartLines.single.price, 5);
+      expect(controller.grandTotal, closeTo(11.8, 0.001));
+      await controller.selectCustomer(PosPreviewData.customers[1]);
+      expect(controller.cartLines.single.price, 4);
+      expect(api.quoteRequests.last['customer'], 'CUST-002');
+      api.failQuotes = true;
+      await controller.submitCurrentOrder();
+      expect(api.submittedPayloads, isEmpty);
+      expect(controller.cartLines, hasLength(1));
+      expect(await harness.orderRepository.readPendingQueue(), isEmpty);
+      expect(controller.statusMessage, contains('Prices unavailable'));
+      await controller.changeLineQuantity(controller.cartLines.single, -2);
+      expect(controller.cartLines, isEmpty);
     },
   );
 }
