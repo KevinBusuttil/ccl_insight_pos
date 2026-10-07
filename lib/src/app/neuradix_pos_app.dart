@@ -3943,19 +3943,20 @@ class _HostedShellViewState extends State<_HostedShellView>
 
         return Row(
           children: <Widget>[
-            _LeftRail(
-              brandName:
-                  _profile?.businessName.isNotEmpty == true
-                      ? _profile!.businessName
-                      : widget.bootstrap.brandName,
-              selectedView: _selectedView,
-              onSelect: (String value) {
-                setState(() {
-                  _selectedView = value;
-                });
-              },
-              items: _railItems,
-            ),
+            if (MediaQuery.sizeOf(context).width >= 700)
+              _LeftRail(
+                brandName:
+                    _profile?.businessName.isNotEmpty == true
+                        ? _profile!.businessName
+                        : widget.bootstrap.brandName,
+                selectedView: _selectedView,
+                onSelect: (String value) {
+                  setState(() {
+                    _selectedView = value;
+                  });
+                },
+                items: _railItems,
+              ),
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
@@ -5163,7 +5164,30 @@ class _PosShellView extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
                 child: Column(
                   children: <Widget>[
-                    _ShellHeader(
+                    if (MediaQuery.sizeOf(context).width < 700)
+                      DropdownButton<String>(
+                        isExpanded: true,
+                        value: controller.selectedView,
+                        items:
+                            [
+                                  'Order',
+                                  'Customer',
+                                  'Plan & Sync',
+                                  'History',
+                                  'My Profile',
+                                ]
+                                .map(
+                                  (name) => DropdownMenuItem(
+                                    value: name,
+                                    child: Text(name),
+                                  ),
+                                )
+                                .toList(),
+                        onChanged: (value) {
+                          if (value != null) controller.selectView(value);
+                        },
+                      ),
+                    PosShellHeader(
                       brandName: brandName,
                       onRefresh: controller.refreshFromBackend,
                       onEditInstance: onEditInstance,
@@ -5413,8 +5437,8 @@ class _RailButton extends StatelessWidget {
   }
 }
 
-class _ShellHeader extends StatelessWidget {
-  const _ShellHeader({
+class PosShellHeader extends StatelessWidget {
+  const PosShellHeader({
     required this.brandName,
     required this.onRefresh,
     required this.onEditInstance,
@@ -5428,6 +5452,35 @@ class _ShellHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (MediaQuery.sizeOf(context).width < 700) {
+      return Row(
+        children: [
+          Expanded(
+            child: Text(
+              brandName,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+          ),
+          IconButton(
+            tooltip: 'Refresh',
+            onPressed: onRefresh,
+            icon: const Icon(Icons.sync),
+          ),
+          IconButton(
+            tooltip: 'Instance',
+            onPressed: onEditInstance,
+            icon: const Icon(Icons.settings),
+          ),
+          IconButton(
+            tooltip: 'Logout',
+            onPressed: onLogout,
+            icon: const Icon(Icons.logout),
+          ),
+        ],
+      );
+    }
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(18),

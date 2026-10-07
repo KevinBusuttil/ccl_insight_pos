@@ -6,7 +6,7 @@ This repository holds the new Flutter `neuradix_pos` client.
 - Plan: `/Users/trek-matrix/Documents/ChatGPT/Marsovin-ERP-test/ops/POS_TRADE_AGREEMENT_PLAN.md`; target restored UAT `http://209.38.46.169` on dedicated_backend mode, with current administrator IP allowlist.
 - `start_macos.sh` accepts NEURADIX_DEFAULT_URL; stored instance URLs/cache must also be switched and isolated by site.
 - `pos_home_controller.dart`: customer selection loads Insight-backed catalog; customer/quantity/UOM/cart/date server quotes and saved ERP price parity are implemented. `isCustomerLoading` starts before cache/network work and resets in finally.
-- `CompactOrderWorkspace` in `lib/src/app/neuradix_pos_app.dart`: persistent View cart button and live bottom sheet for compact emulator/mobile screens; `PosLoadingIndicator` in the shared shell covers Order and Plan & Sync requests. Widget/controller regressions in `test/widget_test.dart` and `test/src/features/pos/pos_home_controller_test.dart`.
+- `CompactOrderWorkspace` in `lib/src/app/neuradix_pos_app.dart`: persistent View cart button and live bottom sheet for compact emulator/mobile screens; phone widths below 700 use a navigation dropdown and compact `PosShellHeader`; `PosLoadingIndicator` in the shared shell covers Order and Plan & Sync requests. Widget/controller regressions in `test/widget_test.dart` and `test/src/features/pos/pos_home_controller_test.dart`.
 - Trade-agreement rules remain server-owned through Neuradix and the configured ERPNext/Insight lifecycle. Offline stale/context-mismatched prices require explicit provisional-order and re-quote handling.
 
 ## Backend Boundary

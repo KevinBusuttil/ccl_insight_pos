@@ -10,6 +10,31 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   GoogleFonts.config.allowRuntimeFetching = false;
 
+  testWidgets('phone shell header preserves space for the order view', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(430, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PosShellHeader(
+            brandName: 'Neuradix CassarCamilleri',
+            onRefresh: () async {},
+            onEditInstance: () async {},
+            onLogout: () async {},
+          ),
+        ),
+      ),
+    );
+    expect(tester.getSize(find.byType(PosShellHeader)).height, lessThan(100));
+    expect(find.byTooltip('Refresh'), findsOneWidget);
+    expect(find.byTooltip('Logout'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'compact cart stays reachable and opens without catalog scrolling',
     (tester) async {
