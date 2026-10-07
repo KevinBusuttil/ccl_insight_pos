@@ -1,3 +1,7 @@
+import 'package:sqflite/sqflite.dart';
+import 'package:neuradix_pos/src/data/local/pos_cache_repository.dart';
+import 'package:neuradix_pos/src/features/orders/local_order_repository.dart';
+import 'package:neuradix_pos/src/features/pos/pos_home_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -6,9 +10,49 @@ import 'package:neuradix_pos/src/features/bootstrap/bootstrap_config.dart';
 import 'package:neuradix_pos/src/features/pos/pos_models.dart';
 import 'package:neuradix_pos/src/theme/neuradix_theme.dart';
 
+class _UnusedDatabase implements Database {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   GoogleFonts.config.allowRuntimeFetching = false;
+
+  testWidgets(
+    'dedicated phone shell hides the desktop rail and keeps cart visible',
+    (tester) async {
+      tester.view.physicalSize = const Size(430, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final database = _UnusedDatabase();
+      final controller = PosHomeController(
+        instanceUrl: 'http://test.local',
+        bootstrap: PosPreviewData.bootstrap,
+        session: PosPreviewData.session,
+        cacheRepository: PosCacheRepository(database),
+        orderRepository: LocalOrderRepository(database),
+      );
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: NeuradixTheme.light(),
+          home: Scaffold(
+            body: NeuradixPreviewShellView(controller: controller),
+          ),
+        ),
+      );
+      expect(find.byType(DropdownButton<String>), findsOneWidget);
+      expect(find.text('View cart (0) · 0.00'), findsOneWidget);
+      expect(find.text('Plan & Sync'), findsNothing);
+      expect(
+        tester.getRect(find.text('View cart (0) · 0.00')).bottom,
+        lessThanOrEqualTo(800),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('phone shell header preserves space for the order view', (
     tester,

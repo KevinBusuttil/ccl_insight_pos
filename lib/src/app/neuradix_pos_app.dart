@@ -3943,20 +3943,19 @@ class _HostedShellViewState extends State<_HostedShellView>
 
         return Row(
           children: <Widget>[
-            if (MediaQuery.sizeOf(context).width >= 700)
-              _LeftRail(
-                brandName:
-                    _profile?.businessName.isNotEmpty == true
-                        ? _profile!.businessName
-                        : widget.bootstrap.brandName,
-                selectedView: _selectedView,
-                onSelect: (String value) {
-                  setState(() {
-                    _selectedView = value;
-                  });
-                },
-                items: _railItems,
-              ),
+            _LeftRail(
+              brandName:
+                  _profile?.businessName.isNotEmpty == true
+                      ? _profile!.businessName
+                      : widget.bootstrap.brandName,
+              selectedView: _selectedView,
+              onSelect: (String value) {
+                setState(() {
+                  _selectedView = value;
+                });
+              },
+              items: _railItems,
+            ),
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
@@ -5154,11 +5153,12 @@ class _PosShellView extends StatelessWidget {
       builder: (BuildContext context, Widget? child) {
         return Row(
           children: <Widget>[
-            _LeftRail(
-              brandName: brandName,
-              selectedView: controller.selectedView,
-              onSelect: controller.selectView,
-            ),
+            if (MediaQuery.sizeOf(context).width >= 700)
+              _LeftRail(
+                brandName: brandName,
+                selectedView: controller.selectedView,
+                onSelect: controller.selectView,
+              ),
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
@@ -5851,17 +5851,34 @@ class _SelectedCustomerBanner extends StatelessWidget {
           const SizedBox(width: 16),
           Column(
             children: <Widget>[
-              OutlinedButton.icon(
-                onPressed: () => controller.selectView('Customer'),
-                icon: const Icon(Icons.people_outline),
-                label: Text(customer == null ? 'Choose Customer' : 'Change'),
-              ),
+              if (MediaQuery.sizeOf(context).width < 700)
+                IconButton(
+                  tooltip:
+                      customer == null ? 'Choose Customer' : 'Change Customer',
+                  onPressed: () => controller.selectView('Customer'),
+                  icon: const Icon(Icons.people_outline),
+                )
+              else
+                OutlinedButton.icon(
+                  onPressed: () => controller.selectView('Customer'),
+                  icon: const Icon(Icons.people_outline),
+                  label: Text(customer == null ? 'Choose Customer' : 'Change'),
+                ),
               if (issueStatement != null) ...<Widget>[
                 const SizedBox(height: 8),
-                TextButton(
-                  onPressed: () => _showIssueStatement(context, issueStatement),
-                  child: const Text('Issue Statement'),
-                ),
+                if (MediaQuery.sizeOf(context).width < 700)
+                  IconButton(
+                    tooltip: 'Issue Statement',
+                    onPressed:
+                        () => _showIssueStatement(context, issueStatement),
+                    icon: const Icon(Icons.receipt_long),
+                  )
+                else
+                  TextButton(
+                    onPressed:
+                        () => _showIssueStatement(context, issueStatement),
+                    child: const Text('Issue Statement'),
+                  ),
               ],
             ],
           ),
