@@ -72,7 +72,7 @@ class PosHomeController extends ChangeNotifier {
   PosCustomer? _selectedCustomer;
   PosCustomerPolicy? _selectedPolicy;
   PosIssueStatement? _selectedIssueStatement;
-  String? _selectedCategory;
+  final Set<String> _selectedCategories = {};
   String _selectedView = 'Order';
   String _customerSearch = '';
   String _catalogSearch = '';
@@ -100,7 +100,9 @@ class PosHomeController extends ChangeNotifier {
   PosIssueStatement? get selectedIssueStatement => _selectedIssueStatement;
   PosAccountSummary? get account => _account;
   List<String> get allCategories => _allCategories;
-  String? get selectedCategory => _selectedCategory;
+  String? get selectedCategory =>
+      _selectedCategories.length == 1 ? _selectedCategories.first : null;
+  Set<String> get selectedCategories => Set.unmodifiable(_selectedCategories);
   String get selectedView => _selectedView;
   String get customerSearch => _customerSearch;
   String get catalogSearch => _catalogSearch;
@@ -341,7 +343,16 @@ class PosHomeController extends ChangeNotifier {
   }
 
   Future<void> selectCategory(String? value) async {
-    _selectedCategory = value == null || value.isEmpty ? null : value;
+    _selectedCategories.clear();
+    if (value != null && value.isNotEmpty) _selectedCategories.add(value);
+    _applyCatalogFilters();
+    notifyListeners();
+  }
+
+  void setCategories(Set<String> values) {
+    _selectedCategories
+      ..clear()
+      ..addAll(values.where(_allCategories.contains));
     _applyCatalogFilters();
     notifyListeners();
   }
@@ -1395,7 +1406,8 @@ class PosHomeController extends ChangeNotifier {
     final filtered = _activeCatalogSourceGroups
         .where(
           (PosCatalogGroup group) =>
-              _selectedCategory == null || group.groupName == _selectedCategory,
+              _selectedCategories.isEmpty ||
+              _selectedCategories.contains(group.groupName),
         )
         .map((PosCatalogGroup group) {
           final items = group.items

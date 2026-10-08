@@ -465,6 +465,17 @@ void main() {
       await selection;
       expect(controller.isCustomerLoading, isFalse);
       expect(loadingStates, containsAllInOrder([true, false]));
+      final categories = controller.allCategories.take(2).toSet();
+      controller.setCategories(categories);
+      expect(controller.selectedCategories, categories);
+      expect(
+        controller.catalogGroups.every(
+          (group) => categories.contains(group.groupName),
+        ),
+        isTrue,
+      );
+      controller.setCategories({});
+      expect(controller.selectedCategories, isEmpty);
 
       expect(apiClient.catalogRequests, <String?>['AX-1001']);
       expect(controller.selectedCustomer?.id, customer.id);

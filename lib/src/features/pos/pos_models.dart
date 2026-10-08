@@ -5,6 +5,10 @@ import '../bootstrap/runtime_bench_url.dart';
 
 class PosThemePalette {
   const PosThemePalette({
+    this.menuCustomer = '#B86B32',
+    this.menuSync = '#527B57',
+    this.menuHistory = '#6266A5',
+    this.menuProfile = '#5E7184',
     required this.primary,
     required this.secondary,
     required this.accent,
@@ -19,7 +23,11 @@ class PosThemePalette {
   });
 
   const PosThemePalette.fallback()
-    : primary = '#2B6F77',
+    : menuCustomer = '#B86B32',
+      menuSync = '#527B57',
+      menuHistory = '#6266A5',
+      menuProfile = '#5E7184',
+      primary = '#2B6F77',
       secondary = '#86A96F',
       accent = '#5E6B73',
       textOnPrimary = '#FFFFFF',
@@ -31,6 +39,10 @@ class PosThemePalette {
       parkOrderButton = '#355B66',
       active = '#F4F7F5';
 
+  final String menuCustomer;
+  final String menuSync;
+  final String menuHistory;
+  final String menuProfile;
   final String primary;
   final String secondary;
   final String accent;
@@ -46,6 +58,10 @@ class PosThemePalette {
   factory PosThemePalette.fromJson(Map<String, dynamic> json) {
     const fallback = PosThemePalette.fallback();
     return PosThemePalette(
+      menuCustomer: '${json['menu_customer'] ?? fallback.menuCustomer}',
+      menuSync: '${json['menu_sync'] ?? fallback.menuSync}',
+      menuHistory: '${json['menu_history'] ?? fallback.menuHistory}',
+      menuProfile: '${json['menu_profile'] ?? fallback.menuProfile}',
       primary: '${json['primary'] ?? fallback.primary}',
       secondary: '${json['secondary'] ?? fallback.secondary}',
       accent: '${json['accent'] ?? json['asset'] ?? fallback.accent}',
@@ -66,6 +82,10 @@ class PosThemePalette {
 
   Map<String, String> toJson() {
     return <String, String>{
+      'menu_customer': menuCustomer,
+      'menu_sync': menuSync,
+      'menu_history': menuHistory,
+      'menu_profile': menuProfile,
       'primary': primary,
       'secondary': secondary,
       'accent': accent,
@@ -142,7 +162,7 @@ class PosBootstrapBundle {
             : 'dedicated_backend';
     return PosBootstrapBundle(
       brandName:
-          '${clientJson['brand_name'] ?? platformJson['brand_name'] ?? 'Neuradix POS'}',
+          '${platformJson['brand_name'] ?? clientJson['brand_name'] ?? 'Neuradix POS'}',
       supportEmail:
           '${clientJson['support_email'] ?? platformJson['support_email'] ?? ''}',
       appName: '${platformJson['app_name'] ?? 'neuradix-pos'}',

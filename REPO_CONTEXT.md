@@ -1,3 +1,8 @@
+## Category / brand / theme UI (2026-10-08)
+- `CategoryMultiSelect` in app shell: collapsed searchable checkbox list, removable selected tags; `PosHomeController.setCategories` filters union of categories, intersected with product search. Empty selection means all.
+- `PosShellHeader`: compact client brand plus Powered by Neuradix; brand_name comes from backend settings.
+- `PosThemePalette.menu*` and `NeuradixTheme.menuAccent`: backend menu_customer/sync/history/profile color fields, serialized in bootstrap/cache. Main palette retains teal. Admin controls Neuradix POS Settings.
+
 # Neuradix POS Frontend Context
 
 This repository holds the new Flutter `neuradix_pos` client.

@@ -5155,6 +5155,7 @@ class _PosShellView extends StatelessWidget {
           children: <Widget>[
             if (MediaQuery.sizeOf(context).width >= 700)
               _LeftRail(
+                palette: controller.bootstrap.theme,
                 brandName: brandName,
                 selectedView: controller.selectedView,
                 onSelect: controller.selectView,
@@ -5249,9 +5250,11 @@ class _LeftRail extends StatelessWidget {
     required this.selectedView,
     required this.onSelect,
     this.items,
+    this.palette = const PosThemePalette.fallback(),
   });
 
   final String brandName;
+  final PosThemePalette palette;
   final String selectedView;
   final ValueChanged<String> onSelect;
   final List<({String label, IconData icon})>? items;
@@ -5315,6 +5318,7 @@ class _LeftRail extends StatelessWidget {
                   children: <Widget>[
                     for (final item in railItems) ...<Widget>[
                       _RailButton(
+                        accent: NeuradixTheme.menuAccent(palette, item.label),
                         label: item.label,
                         icon: item.icon,
                         selected: item.label == selectedView,
@@ -5359,12 +5363,14 @@ class _LeftRail extends StatelessWidget {
 
 class _RailButton extends StatelessWidget {
   const _RailButton({
+    this.accent = const Color(0xFF2B6F77),
     required this.label,
     required this.icon,
     required this.selected,
     required this.onTap,
   });
 
+  final Color accent;
   final String label;
   final IconData icon;
   final bool selected;
@@ -5372,7 +5378,6 @@ class _RailButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = Theme.of(context).colorScheme;
     final borderColor =
         Theme.of(context).dividerTheme.color ?? const Color(0x14000000);
 
@@ -5390,16 +5395,16 @@ class _RailButton extends StatelessWidget {
             constraints: const BoxConstraints.tightFor(height: 108),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
             decoration: BoxDecoration(
-              color: selected ? palette.primary : Colors.white,
+              color: selected ? accent.withValues(alpha: 0.12) : Colors.white,
               borderRadius: BorderRadius.circular(22),
               border: Border.all(
-                color: selected ? palette.primary : borderColor,
+                color: selected ? accent.withValues(alpha: 0.45) : borderColor,
               ),
               boxShadow:
                   selected
                       ? <BoxShadow>[
                         BoxShadow(
-                          color: palette.primary.withValues(alpha: 0.18),
+                          color: accent.withValues(alpha: 0.12),
                           blurRadius: 18,
                           offset: const Offset(0, 8),
                         ),
@@ -5410,11 +5415,7 @@ class _RailButton extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
-                Icon(
-                  icon,
-                  size: 28,
-                  color: selected ? palette.onPrimary : palette.primary,
-                ),
+                Icon(icon, size: 28, color: accent),
                 const SizedBox(height: 10),
                 Text(
                   label,
@@ -5422,7 +5423,7 @@ class _RailButton extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    color: selected ? palette.onPrimary : palette.primary,
+                    color: accent,
                     fontSize: 14,
                     height: 1.12,
                     fontWeight: FontWeight.w800,
@@ -5445,23 +5446,30 @@ class PosShellHeader extends StatelessWidget {
     required this.onEditInstance,
     required this.onLogout,
   });
-
   final String brandName;
-  final Future<void> Function() onRefresh;
-  final Future<void> Function() onEditInstance;
-  final Future<void> Function() onLogout;
-
+  final Future<void> Function() onRefresh, onEditInstance, onLogout;
   @override
-  Widget build(BuildContext context) {
-    if (MediaQuery.sizeOf(context).width < 700) {
-      return Row(
+  Widget build(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Row(
         children: [
           Expanded(
-            child: Text(
-              brandName,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.titleMedium,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  brandName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const Text(
+                  'Powered by Neuradix',
+                  style: TextStyle(fontSize: 11, color: Color(0xFF6B7280)),
+                ),
+              ],
             ),
           ),
           IconButton(
@@ -5480,45 +5488,123 @@ class PosShellHeader extends StatelessWidget {
             icon: const Icon(Icons.logout),
           ),
         ],
-      );
-    }
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Row(
-          children: <Widget>[
-            Expanded(
-              child: Text(
-                brandName,
-                style: Theme.of(context).textTheme.headlineMedium,
+      ),
+    ),
+  );
+}
+
+class CategoryMultiSelect extends StatefulWidget {
+  const CategoryMultiSelect({
+    super.key,
+    required this.categories,
+    required this.selected,
+    required this.onChanged,
+  });
+  final List<String> categories;
+  final Set<String> selected;
+  final ValueChanged<Set<String>> onChanged;
+  @override
+  State<CategoryMultiSelect> createState() => _CategoryMultiSelectState();
+}
+
+class _CategoryMultiSelectState extends State<CategoryMultiSelect> {
+  bool expanded = false;
+  String search = '';
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Row(
+        children: [
+          Expanded(
+            child: TextButton.icon(
+              onPressed: () => setState(() => expanded = !expanded),
+              icon: Icon(expanded ? Icons.expand_less : Icons.expand_more),
+              label: Text(
+                widget.selected.isEmpty
+                    ? 'Categories · All'
+                    : 'Categories · ${widget.selected.length} selected',
               ),
             ),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: <Widget>[
-                OutlinedButton.icon(
-                  onPressed: () => onRefresh(),
-                  icon: const Icon(Icons.sync),
-                  label: const Text('Refresh'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: () => onEditInstance(),
-                  icon: const Icon(Icons.settings_ethernet_outlined),
-                  label: const Text('Instance'),
-                ),
-                ElevatedButton.icon(
-                  onPressed: () => onLogout(),
-                  icon: const Icon(Icons.logout),
-                  label: const Text('Logout'),
-                ),
-              ],
+          ),
+          if (widget.selected.isNotEmpty)
+            TextButton(
+              onPressed: () => widget.onChanged({}),
+              child: const Text('Clear'),
             ),
-          ],
-        ),
+        ],
       ),
-    );
-  }
+      if (widget.selected.isNotEmpty)
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 80),
+          child: SingleChildScrollView(
+            child: Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children:
+                  widget.selected
+                      .map(
+                        (category) => InputChip(
+                          label: Text(category),
+                          onDeleted:
+                              () => widget.onChanged(
+                                {...widget.selected}..remove(category),
+                              ),
+                        ),
+                      )
+                      .toList(),
+            ),
+          ),
+        ),
+      if (expanded) ...[
+        TextField(
+          onChanged: (value) => setState(() => search = value),
+          decoration: const InputDecoration(
+            hintText: 'Search categories',
+            prefixIcon: Icon(Icons.search),
+          ),
+        ),
+        const SizedBox(height: 6),
+        SizedBox(
+          height: 140,
+          child: Builder(
+            builder: (context) {
+              final matches =
+                  widget.categories
+                      .where(
+                        (name) => name.toLowerCase().contains(
+                          search.trim().toLowerCase(),
+                        ),
+                      )
+                      .toList();
+              return matches.isEmpty
+                  ? const Center(child: Text('No matching categories'))
+                  : ListView(
+                    children:
+                        matches
+                            .map(
+                              (name) => CheckboxListTile(
+                                dense: true,
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(name),
+                                value: widget.selected.contains(name),
+                                onChanged: (checked) {
+                                  final selection = {...widget.selected};
+                                  checked == true
+                                      ? selection.add(name)
+                                      : selection.remove(name);
+                                  widget.onChanged(selection);
+                                },
+                              ),
+                            )
+                            .toList(),
+                  );
+            },
+          ),
+        ),
+      ],
+    ],
+  );
 }
 
 /// Keeps the cart reachable while browsing on phones and short emulator screens.
@@ -5664,7 +5750,7 @@ class _OrderViewState extends State<_OrderView> {
                     children: <Widget>[
                       Expanded(
                         child: Text(
-                          'Choose Category',
+                          'Products',
                           style: Theme.of(context).textTheme.titleLarge,
                         ),
                       ),
@@ -5685,28 +5771,10 @@ class _OrderViewState extends State<_OrderView> {
                   const SizedBox(height: 16),
                   _SelectedCustomerBanner(controller: controller),
                   const SizedBox(height: 14),
-                  SizedBox(
-                    height: 90,
-                    child: SingleChildScrollView(
-                      child: Wrap(
-                        spacing: 10,
-                        runSpacing: 10,
-                        children: <Widget>[
-                          ChoiceChip(
-                            label: const Text('All'),
-                            selected: controller.selectedCategory == null,
-                            onSelected: (_) => controller.selectCategory(null),
-                          ),
-                          for (final category in controller.allCategories)
-                            ChoiceChip(
-                              label: Text(category),
-                              selected: controller.selectedCategory == category,
-                              onSelected:
-                                  (_) => controller.selectCategory(category),
-                            ),
-                        ],
-                      ),
-                    ),
+                  CategoryMultiSelect(
+                    categories: controller.allCategories,
+                    selected: controller.selectedCategories,
+                    onChanged: controller.setCategories,
                   ),
                 ],
               ),

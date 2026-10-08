@@ -4,6 +4,19 @@ import 'package:google_fonts/google_fonts.dart';
 import '../features/pos/pos_models.dart';
 
 class NeuradixTheme {
+  static Color menuAccent(PosThemePalette palette, String label) {
+    final hex = switch (label) {
+      'Customer' => palette.menuCustomer,
+      'Plan & Sync' => palette.menuSync,
+      'History' => palette.menuHistory,
+      'My Profile' => palette.menuProfile,
+      _ => palette.primary,
+    };
+    return RegExp(r'^#[0-9a-fA-F]{6}$').hasMatch(hex)
+        ? Color(int.parse('FF${hex.substring(1)}', radix: 16))
+        : const Color(0xFF2B6F77);
+  }
+
   static ThemeData light({
     PosThemePalette palette = const PosThemePalette.fallback(),
   }) {

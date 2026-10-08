@@ -19,6 +19,90 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   GoogleFonts.config.allowRuntimeFetching = false;
 
+  test(
+    'POS brand setting takes precedence over shared client app branding',
+    () {
+      final bundle = PosBootstrapBundle.fromResponses(
+        {'brand_name': 'Cassarcamilleri POS'},
+        {'brand_name': 'Neuradix CassarCamilleri'},
+      );
+      expect(bundle.brandName, 'Cassarcamilleri POS');
+      expect(
+        PosBootstrapBundle.fromResponses({}, {
+          'brand_name': 'Client POS',
+        }).brandName,
+        'Client POS',
+      );
+    },
+  );
+
+  testWidgets(
+    'categories search, multiselect, tags and collapse preserve selection',
+    (tester) async {
+      var selected = <String>{};
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StatefulBuilder(
+              builder:
+                  (context, setState) => CategoryMultiSelect(
+                    categories: const [
+                      'French Wines',
+                      'Italian Wines',
+                      'Water',
+                    ],
+                    selected: selected,
+                    onChanged: (value) => setState(() => selected = value),
+                  ),
+            ),
+          ),
+        ),
+      );
+      expect(find.byType(CheckboxListTile), findsNothing);
+      await tester.tap(find.text('Categories · All'));
+      await tester.pump();
+      await tester.enterText(find.byType(TextField), 'wines');
+      await tester.pump();
+      expect(find.text('Water'), findsNothing);
+      await tester.tap(find.text('French Wines'));
+      await tester.pump();
+      await tester.tap(find.text('Italian Wines'));
+      await tester.pump();
+      expect(selected, {'French Wines', 'Italian Wines'});
+      await tester.tap(find.text('Categories · 2 selected'));
+      await tester.pump();
+      expect(find.byType(CheckboxListTile), findsNothing);
+      expect(find.byType(InputChip), findsNWidgets(2));
+      final chip = tester.widget<InputChip>(find.byType(InputChip).first);
+      chip.onDeleted!();
+      await tester.pump();
+      expect(selected.length, 1);
+      await tester.tap(find.text('Clear'));
+      await tester.pump();
+      expect(selected, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  test(
+    'menu accents deserialize, persist and reject malformed color values',
+    () {
+      final palette = PosThemePalette.fromJson({'menu_customer': '#AA6633'});
+      expect(palette.toJson()['menu_customer'], '#AA6633');
+      expect(
+        NeuradixTheme.menuAccent(palette, 'Customer'),
+        const Color(0xFFAA6633),
+      );
+      expect(
+        NeuradixTheme.menuAccent(
+          PosThemePalette.fromJson({'menu_customer': 'broken'}),
+          'Customer',
+        ),
+        const Color(0xFF2B6F77),
+      );
+    },
+  );
+
   testWidgets(
     'dedicated phone shell hides the desktop rail and keeps cart visible',
     (tester) async {
