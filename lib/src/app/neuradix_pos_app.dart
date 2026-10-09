@@ -5621,11 +5621,7 @@ class CompactOrderWorkspace extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Column(
     children: [
-      Expanded(
-        child: SingleChildScrollView(
-          child: SizedBox(height: 720, child: catalog),
-        ),
-      ),
+      Expanded(child: catalog),
       SafeArea(
         top: false,
         child: SizedBox(
@@ -5742,44 +5738,35 @@ class _OrderViewState extends State<_OrderView> {
                 : posOrderCartPanelWidth(constraints.maxWidth);
         final catalogColumn = Column(
           children: <Widget>[
-            _SectionCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Row(
-                    children: <Widget>[
-                      Expanded(
-                        child: Text(
-                          'Products',
-                          style: Theme.of(context).textTheme.titleLarge,
-                        ),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _searchController,
+                      onChanged: controller.updateCatalogSearch,
+                      decoration: const InputDecoration(
+                        hintText: 'Search products / category',
+                        prefixIcon: Icon(Icons.search),
+                        isDense: true,
                       ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        flex: 2,
-                        child: TextField(
-                          controller: _searchController,
-                          onChanged: controller.updateCatalogSearch,
-                          decoration: const InputDecoration(
-                            hintText: 'Search products / category',
-                            prefixIcon: Icon(Icons.search),
-                          ),
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
-                  const SizedBox(height: 16),
-                  _SelectedCustomerBanner(controller: controller),
-                  const SizedBox(height: 14),
-                  CategoryMultiSelect(
-                    categories: controller.allCategories,
-                    selected: controller.selectedCategories,
-                    onChanged: controller.setCategories,
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: constraints.maxWidth < 700 ? 140 : 250,
+                    child: _SelectedCustomerBanner(controller: controller),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 14),
+            CategoryMultiSelect(
+              categories: controller.allCategories,
+              selected: controller.selectedCategories,
+              onChanged: controller.setCategories,
+            ),
+            const SizedBox(height: 8),
             Expanded(
               child: _SectionCard(
                 child:
@@ -5792,6 +5779,10 @@ class _OrderViewState extends State<_OrderView> {
                                   group: group,
                                   instanceUrl: controller.instanceUrl,
                                   onAddItem: controller.addItem,
+                                  searchResults:
+                                      controller.catalogSearch
+                                          .trim()
+                                          .isNotEmpty,
                                 ),
                               )
                               .toList(growable: false),
@@ -5847,111 +5838,34 @@ class _SelectedCustomerBanner extends StatelessWidget {
     final customer = controller.selectedCustomer;
     final policy = controller.selectedPolicy;
     final issueStatement = controller.selectedIssueStatement;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: Theme.of(context).dividerTheme.color ?? Colors.black12,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        OutlinedButton.icon(
+          onPressed: () => controller.selectView('Customer'),
+          icon: const Icon(Icons.people_outline, size: 18),
+          label: Text(
+            customer?.displayName ?? 'Choose Customer',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
-      ),
-      child: Row(
-        children: <Widget>[
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text(
-                  customer?.displayName ?? 'No customer selected',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  customer == null
-                      ? 'Move to the Customers tab to choose or create a customer.'
-                      : '${customer.mobileNo}  ${customer.customerCode.isEmpty ? '' : '• ${customer.customerCode}'}',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-                if (policy != null) ...<Widget>[
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: <Widget>[
-                      if (policy.isFrozen)
-                        const _Badge(label: 'Frozen', tone: _BadgeTone.error),
-                      if (policy.hasOutstandingDocuments)
-                        _Badge(
-                          label:
-                              'Outstanding ${policy.outstandingAmount.toStringAsFixed(2)}',
-                          tone: _BadgeTone.warning,
-                        ),
-                      if (policy.minimumOrderRequired)
-                        _Badge(
-                          label:
-                              'Minimum ${policy.minimumOrderAmount.toStringAsFixed(2)}',
-                          tone: _BadgeTone.neutral,
-                        ),
-                      if (controller.isOffline)
-                        _Badge(
-                          label:
-                              controller.selectedCustomerOfflineReady
-                                  ? 'Offline-ready'
-                                  : 'Plan sync required',
-                          tone:
-                              controller.selectedCustomerOfflineReady
-                                  ? _BadgeTone.success
-                                  : _BadgeTone.warning,
-                        ),
-                      if (issueStatement != null &&
-                          issueStatement.paymentTerm.isNotEmpty)
-                        _Badge(
-                          label: 'Term ${issueStatement.paymentTerm}',
-                          tone: _BadgeTone.neutral,
-                        ),
-                    ],
-                  ),
-                ],
-              ],
+        if (policy != null && (policy.isFrozen || policy.minimumOrderRequired))
+          Text(
+            policy.isFrozen
+                ? 'Frozen account'
+                : 'Minimum ${policy.minimumOrderAmount.toStringAsFixed(2)}',
+            style: Theme.of(context).textTheme.labelSmall,
+          ),
+        if (issueStatement != null)
+          InkWell(
+            onTap: () => _showIssueStatement(context, issueStatement),
+            child: const Padding(
+              padding: EdgeInsets.all(4),
+              child: Text('Account details'),
             ),
           ),
-          const SizedBox(width: 16),
-          Column(
-            children: <Widget>[
-              if (MediaQuery.sizeOf(context).width < 700)
-                IconButton(
-                  tooltip:
-                      customer == null ? 'Choose Customer' : 'Change Customer',
-                  onPressed: () => controller.selectView('Customer'),
-                  icon: const Icon(Icons.people_outline),
-                )
-              else
-                OutlinedButton.icon(
-                  onPressed: () => controller.selectView('Customer'),
-                  icon: const Icon(Icons.people_outline),
-                  label: Text(customer == null ? 'Choose Customer' : 'Change'),
-                ),
-              if (issueStatement != null) ...<Widget>[
-                const SizedBox(height: 8),
-                if (MediaQuery.sizeOf(context).width < 700)
-                  IconButton(
-                    tooltip: 'Issue Statement',
-                    onPressed:
-                        () => _showIssueStatement(context, issueStatement),
-                    icon: const Icon(Icons.receipt_long),
-                  )
-                else
-                  TextButton(
-                    onPressed:
-                        () => _showIssueStatement(context, issueStatement),
-                    child: const Text('Issue Statement'),
-                  ),
-              ],
-            ],
-          ),
-        ],
-      ),
+      ],
     );
   }
 
@@ -6027,39 +5941,155 @@ class _CatalogGroupSection extends StatelessWidget {
     required this.group,
     required this.instanceUrl,
     required this.onAddItem,
+    this.searchResults = false,
   });
-
   final PosCatalogGroup group;
   final String instanceUrl;
   final ValueChanged<PosCatalogItem> onAddItem;
-
+  final bool searchResults;
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(group.groupName, style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 12),
+  Widget build(BuildContext context) => CatalogCategoryShelf(
+    group: group,
+    instanceUrl: instanceUrl,
+    onAddItem: onAddItem,
+    searchResults: searchResults,
+  );
+}
+
+class CatalogCategoryShelf extends StatelessWidget {
+  const CatalogCategoryShelf({
+    super.key,
+    required this.group,
+    required this.instanceUrl,
+    required this.onAddItem,
+    this.searchResults = false,
+  });
+  final PosCatalogGroup group;
+  final String instanceUrl;
+  final ValueChanged<PosCatalogItem> onAddItem;
+  final bool searchResults;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 20),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                group.groupName,
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+            ),
+            if (!searchResults) const Icon(Icons.swipe, size: 18),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (searchResults)
           Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: group.items
-                .map(
-                  (PosCatalogItem item) => _CatalogItemCard(
-                    item: item,
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final item in group.items)
+                _CatalogItemCard(
+                  item: item,
+                  instanceUrl: instanceUrl,
+                  onAddItem: onAddItem,
+                ),
+            ],
+          )
+        else
+          SizedBox(
+            height: MediaQuery.sizeOf(context).width >= 1000 ? 480 : 236,
+            child: GridView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: group.items.length,
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount:
+                    MediaQuery.sizeOf(context).width >= 1000 ? 2 : 1,
+                mainAxisExtent: 190,
+                mainAxisSpacing: 8,
+                crossAxisSpacing: 8,
+              ),
+              itemBuilder:
+                  (context, index) => _CatalogItemCard(
+                    item: group.items[index],
                     instanceUrl: instanceUrl,
                     onAddItem: onAddItem,
                   ),
-                )
-                .toList(growable: false),
+            ),
           ),
-        ],
-      ),
-    );
-  }
+      ],
+    ),
+  );
 }
+
+Future<void> showCatalogItemPreview(
+  BuildContext context,
+  PosCatalogItem item,
+  String instanceUrl,
+  ValueChanged<PosCatalogItem> onAdd,
+) => showDialog<void>(
+  context: context,
+  builder: (context) {
+    final image = buildCatalogImageProvider(
+      instanceUrl: instanceUrl,
+      item: item,
+    );
+    return AlertDialog(
+      title: Text(item.displayName),
+      content: SizedBox(
+        width: 500,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                height: 220,
+                width: double.infinity,
+                child:
+                    image == null
+                        ? const Icon(Icons.local_offer_outlined, size: 80)
+                        : Image(
+                          image: image,
+                          fit: BoxFit.contain,
+                          errorBuilder:
+                              (_, __, ___) => const Icon(
+                                Icons.image_not_supported_outlined,
+                                size: 80,
+                              ),
+                        ),
+              ),
+              const SizedBox(height: 16),
+              Text(item.itemCode),
+              Text('${item.stockQty.toStringAsFixed(0)} in stock'),
+              Text(
+                item.pricingAvailable
+                    ? '${item.price.toStringAsFixed(2)} per ${item.defaultUom}'
+                    : 'Price unavailable',
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Close'),
+        ),
+        FilledButton(
+          onPressed: () {
+            Navigator.pop(context);
+            onAdd(item);
+          },
+          child: const Text('Add to cart'),
+        ),
+      ],
+    );
+  },
+);
 
 class _CatalogItemCard extends StatelessWidget {
   const _CatalogItemCard({
@@ -6083,9 +6113,12 @@ class _CatalogItemCard extends StatelessWidget {
       child: Card(
         child: InkWell(
           onTap: () => onAddItem(item),
+          onLongPress:
+              () =>
+                  showCatalogItemPreview(context, item, instanceUrl, onAddItem),
           borderRadius: BorderRadius.circular(18),
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(10),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
@@ -6115,14 +6148,14 @@ class _CatalogItemCard extends StatelessWidget {
                                 ),
                           ),
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 8),
                 Text(
                   item.displayName,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.titleLarge,
+                  style: Theme.of(context).textTheme.titleMedium,
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 Text(
                   '${item.stockQty.toStringAsFixed(0)} in stock',
                   style: Theme.of(context).textTheme.bodyMedium,
@@ -6140,8 +6173,19 @@ class _CatalogItemCard extends StatelessWidget {
                         ).textTheme.headlineMedium?.copyWith(fontSize: 20),
                       ),
                     ),
+                    IconButton(
+                      tooltip: 'Product details',
+                      onPressed:
+                          () => showCatalogItemPreview(
+                            context,
+                            item,
+                            instanceUrl,
+                            onAddItem,
+                          ),
+                      icon: const Icon(Icons.info_outline, size: 18),
+                    ),
                     CircleAvatar(
-                      radius: 18,
+                      radius: 14,
                       backgroundColor: Theme.of(context).colorScheme.primary,
                       child: Icon(
                         Icons.add,
@@ -6949,51 +6993,7 @@ class _PlanSyncView extends StatelessWidget {
                             'Item image changes in the backend are picked up by the next Sync Data run.',
                       ),
                       const SizedBox(height: 18),
-                      Text(
-                        'Customers visible to this rep',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: 12),
-                      Expanded(
-                        child:
-                            controller.customers.isEmpty
-                                ? const Center(
-                                  child: Text('No visible customers cached'),
-                                )
-                                : ListView(
-                                  children: controller.customers
-                                      .take(12)
-                                      .map((PosCustomer customer) {
-                                        final planned = plannedCustomerIds
-                                            .contains(customer.id);
-                                        return Padding(
-                                          padding: const EdgeInsets.only(
-                                            bottom: 10,
-                                          ),
-                                          child: Row(
-                                            children: <Widget>[
-                                              Expanded(
-                                                child: Text(
-                                                  customer.displayName,
-                                                ),
-                                              ),
-                                              _Badge(
-                                                label:
-                                                    planned
-                                                        ? 'Planned'
-                                                        : 'Available',
-                                                tone:
-                                                    planned
-                                                        ? _BadgeTone.success
-                                                        : _BadgeTone.neutral,
-                                              ),
-                                            ],
-                                          ),
-                                        );
-                                      })
-                                      .toList(growable: false),
-                                ),
-                      ),
+                      Text('${controller.customers.length} customers cached'),
                     ],
                   ),
                 ),
@@ -7230,85 +7230,19 @@ class _HistoryView extends StatelessWidget {
             child:
                 orders.isEmpty
                     ? const Center(child: Text('No history available'))
-                    : GridView.builder(
+                    : ListView.builder(
                       itemCount: orders.length,
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 2,
-                            mainAxisSpacing: 12,
-                            crossAxisSpacing: 12,
-                            childAspectRatio: 2.15,
-                          ),
-                      itemBuilder: (BuildContext context, int index) {
+                      itemBuilder: (context, index) {
                         final order = orders[index];
                         return Card(
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: <Widget>[
-                                Row(
-                                  children: <Widget>[
-                                    Expanded(
-                                      child: Text(
-                                        order.id,
-                                        style:
-                                            Theme.of(
-                                              context,
-                                            ).textTheme.titleLarge,
-                                      ),
-                                    ),
-                                    _Badge(
-                                      label:
-                                          order.isParked
-                                              ? 'Parked'
-                                              : order.isLocalOnly
-                                              ? 'Queued'
-                                              : order.status,
-                                      tone:
-                                          order.isParked
-                                              ? _BadgeTone.warning
-                                              : order.isLocalOnly
-                                              ? _BadgeTone.neutral
-                                              : _BadgeTone.success,
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 10),
-                                Text(order.customer),
-                                const SizedBox(height: 6),
-                                Text(order.transactionDate),
-                                const SizedBox(height: 10),
-                                Expanded(
-                                  child: ListView(
-                                    children: order.items
-                                        .map(
-                                          (PosHistoryOrderLine item) => Padding(
-                                            padding: const EdgeInsets.only(
-                                              bottom: 6,
-                                            ),
-                                            child: Text(
-                                              '${item.itemName} x${item.qty.toStringAsFixed(0)}',
-                                              style:
-                                                  Theme.of(
-                                                    context,
-                                                  ).textTheme.bodyMedium,
-                                            ),
-                                          ),
-                                        )
-                                        .toList(growable: false),
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  order.grandTotal.toStringAsFixed(2),
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .headlineMedium
-                                      ?.copyWith(fontSize: 20),
-                                ),
-                              ],
+                          child: ListTile(
+                            title: Text(order.id),
+                            subtitle: Text(
+                              '${order.customer} • ${order.transactionDate}\n${order.status} • ${order.items.length} items',
                             ),
+                            trailing: Text(order.grandTotal.toStringAsFixed(2)),
+                            onTap:
+                                () => showHistoryOrderDetails(context, order),
                           ),
                         );
                       },
@@ -7319,6 +7253,83 @@ class _HistoryView extends StatelessWidget {
     );
   }
 }
+
+Future<void> showHistoryOrderDetails(
+  BuildContext context,
+  PosHistoryOrder order,
+) => showDialog<void>(
+  context: context,
+  builder:
+      (context) => AlertDialog(
+        title: Text(order.id),
+        content: SizedBox(
+          width: 720,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('${order.customer} • ${order.transactionDate}'),
+                Text(
+                  order.isParked
+                      ? 'Parked'
+                      : order.isLocalOnly
+                      ? 'Queued'
+                      : order.status,
+                ),
+                for (final key in [
+                  'delivery_date',
+                  'mode_of_payment',
+                  'total',
+                  'total_taxes_and_charges',
+                  'notes',
+                  'additional_notes',
+                ])
+                  if ('${order.savedDetails[key] ?? ''}'.isNotEmpty)
+                    Text(
+                      '${key.replaceAll('_', ' ')}: ${order.savedDetails[key]}',
+                    ),
+                const Divider(),
+                for (final item in order.items)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          item.itemName,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        Text(item.itemCode),
+                        Text(
+                          'Quantity ${item.qty} ${item.savedDetails['uom'] ?? ''} • Rate ${item.rate.toStringAsFixed(2)} • Line total ${item.savedDetails['amount'] ?? (item.qty * item.rate).toStringAsFixed(2)}',
+                        ),
+                        if (item.notes.isNotEmpty)
+                          Text('Comments: ${item.notes}'),
+                        for (final sub in item.subItems)
+                          Text(
+                            'Associated item: ${sub.entries.map((e) => '${e.key}: ${e.value}').join(' • ')}',
+                          ),
+                      ],
+                    ),
+                  ),
+                const Divider(),
+                Text(
+                  'Grand total ${order.grandTotal.toStringAsFixed(2)}',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+);
 
 class _ProfileView extends StatelessWidget {
   const _ProfileView({

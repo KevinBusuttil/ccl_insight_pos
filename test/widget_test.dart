@@ -19,6 +19,90 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   GoogleFonts.config.allowRuntimeFetching = false;
 
+  testWidgets(
+    'tablet shelves scroll together and long press previews without adding',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final item = PosPreviewData.catalog.first.items.first;
+      var additions = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: NeuradixTheme.light(),
+          home: Scaffold(
+            body: CatalogCategoryShelf(
+              group: PosPreviewData.catalog.first,
+              instanceUrl: 'http://test.local',
+              onAddItem: (_) => additions++,
+            ),
+          ),
+        ),
+      );
+      final grid = tester.widget<GridView>(find.byType(GridView));
+      expect(grid.scrollDirection, Axis.horizontal);
+      expect(
+        (grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount)
+            .crossAxisCount,
+        2,
+      );
+      await tester.longPress(find.text(item.displayName).first);
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(find.text(item.itemCode), findsOneWidget);
+      expect(additions, 0);
+      await tester.tap(find.text('Add to cart'));
+      await tester.pumpAndSettle();
+      expect(additions, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('history dialog retains saved prices UOM totals and comments', (
+    tester,
+  ) async {
+    final order = PosHistoryOrder.fromJson({
+      'name': 'SO-TEST',
+      'customer': 'Test customer',
+      'grand_total': 12,
+      'total_taxes_and_charges': 2,
+      'notes': 'Delivery comment',
+      'items': [
+        {
+          'item_code': 'ITEM',
+          'item_name': 'Full product name',
+          'qty': 2,
+          'rate': 5,
+          'amount': 10,
+          'uom': 'Bottle',
+          'notes': 'Item comment',
+        },
+      ],
+    });
+    final restored = PosHistoryOrder.fromJson(order.toJson());
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder:
+                (context) => TextButton(
+                  onPressed: () => showHistoryOrderDetails(context, restored),
+                  child: const Text('Open order'),
+                ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Open order'));
+    await tester.pumpAndSettle();
+    expect(find.text('Comments: Item comment'), findsOneWidget);
+    expect(find.textContaining('Delivery comment'), findsOneWidget);
+    expect(find.textContaining('Bottle'), findsOneWidget);
+    expect(find.text('Grand total 12.00'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   test(
     'POS brand setting takes precedence over shared client app branding',
     () {

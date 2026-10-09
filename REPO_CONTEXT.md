@@ -1,3 +1,8 @@
+## Tablet category shelves (2026-10-09)
+- Order controls remain outside scrolling catalog. Compact workspace no longer scrolls its fixed-height parent. Search expands beside compact customer/account controls.
+- CatalogCategoryShelf: horizontal linked two-row tablet grids, one row on smaller screens; search uses wrapped result cards. Card long press or Product details opens showCatalogItemPreview without adding.
+- showHistoryOrderDetails uses saved prices/UOM/amount/comments and retained JSON metadata; no recalculation. Plan & Sync shows customer count instead of redundant list. Regression tests in test/widget_test.dart.
+
 ## Category / brand / theme UI (2026-10-08)
 - `CategoryMultiSelect` in app shell: collapsed searchable checkbox list, removable selected tags; `PosHomeController.setCategories` filters union of categories, intersected with product search. Empty selection means all.
 - `PosShellHeader`: compact client brand plus Powered by Neuradix; brand_name comes from backend settings.

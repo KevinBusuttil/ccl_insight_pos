@@ -530,8 +530,10 @@ class PosHistoryOrderLine {
     required this.notes,
     required this.taxRows,
     required this.subItems,
+    this.savedDetails = const {},
   });
 
+  final Map<String, dynamic> savedDetails;
   final String itemCode;
   final String itemName;
   final double qty;
@@ -542,6 +544,7 @@ class PosHistoryOrderLine {
 
   factory PosHistoryOrderLine.fromJson(Map<String, dynamic> json) {
     return PosHistoryOrderLine(
+      savedDetails: Map<String, dynamic>.from(json),
       itemCode: '${json['item_code'] ?? ''}',
       itemName: '${json['item_name'] ?? json['item_code'] ?? ''}',
       qty: double.tryParse('${json['qty'] ?? 0}') ?? 0,
@@ -558,6 +561,7 @@ class PosHistoryOrderLine {
 
   Map<String, Object?> toJson() {
     return <String, Object?>{
+      ...savedDetails,
       'item_code': itemCode,
       'item_name': itemName,
       'qty': qty,
@@ -579,8 +583,10 @@ class PosHistoryOrder {
     required this.isParked,
     required this.isLocalOnly,
     required this.items,
+    this.savedDetails = const {},
   });
 
+  final Map<String, dynamic> savedDetails;
   final String id;
   final String customer;
   final String transactionDate;
@@ -593,6 +599,7 @@ class PosHistoryOrder {
   factory PosHistoryOrder.fromJson(Map<String, dynamic> json) {
     final itemsJson = (json['items'] as List?) ?? const <dynamic>[];
     return PosHistoryOrder(
+      savedDetails: Map<String, dynamic>.from(json),
       id: '${json['name'] ?? json['id'] ?? ''}',
       customer: '${json['customer'] ?? ''}',
       transactionDate:
@@ -617,6 +624,7 @@ class PosHistoryOrder {
 
   Map<String, Object?> toJson() {
     return <String, Object?>{
+      ...savedDetails,
       'name': id,
       'customer': customer,
       'transaction_date': transactionDate,
