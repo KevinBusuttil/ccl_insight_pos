@@ -5167,6 +5167,16 @@ class _PosShellView extends StatelessWidget {
               side: const BorderSide(color: Color(0xFFD8E1E3)),
             ),
           ),
+          outlinedButtonTheme: OutlinedButtonThemeData(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFF233C44),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              side: const BorderSide(color: Color(0xFFD8E1E3)),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+            ),
+          ),
           inputDecorationTheme: const InputDecorationTheme(
             filled: true,
             fillColor: Colors.white,
@@ -5239,6 +5249,7 @@ class _PosShellView extends StatelessWidget {
                           children: [
                             if (MediaQuery.sizeOf(context).width >= 700)
                               _LeftRail(
+                                reference: true,
                                 palette: controller.bootstrap.theme,
                                 brandName: brandName,
                                 selectedView: controller.selectedView,
@@ -5329,9 +5340,11 @@ class _LeftRail extends StatelessWidget {
     required this.selectedView,
     required this.onSelect,
     this.items,
+    this.reference = false,
     this.palette = const PosThemePalette.fallback(),
   });
 
+  final bool reference;
   final String brandName;
   final PosThemePalette palette;
   final String selectedView;
@@ -5377,8 +5390,16 @@ class _LeftRail extends StatelessWidget {
                     for (final item in railItems) ...<Widget>[
                       _RailButton(
                         accent: NeuradixTheme.menuAccent(palette, item.label),
-                        label: item.label,
-                        icon: item.icon,
+                        label:
+                            reference && item.label == 'My Profile'
+                                ? 'Settings'
+                                : reference && item.label == 'Customer'
+                                ? 'Customers'
+                                : item.label,
+                        icon:
+                            reference && item.label == 'My Profile'
+                                ? Icons.settings_outlined
+                                : item.icon,
                         selected: item.label == selectedView,
                         onTap: () => onSelect(item.label),
                       ),
@@ -6491,16 +6512,38 @@ class ReferenceOrderPanel extends StatelessWidget {
                 child: const Text('Back'),
               ),
               TextButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  controller.parkCurrentOrder();
+                onPressed: () async {
+                  await controller.parkCurrentOrder();
+                  if (!context.mounted) return;
+                  if (controller.cartLines.isEmpty &&
+                      controller.selectedCustomer != null) {
+                    Navigator.pop(context);
+                  }
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        controller.statusMessage ?? 'Order updated',
+                      ),
+                    ),
+                  );
                 },
                 child: const Text('Park Order'),
               ),
               FilledButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  controller.submitCurrentOrder();
+                onPressed: () async {
+                  await controller.submitCurrentOrder();
+                  if (!context.mounted) return;
+                  if (controller.cartLines.isEmpty &&
+                      controller.selectedCustomer != null) {
+                    Navigator.pop(context);
+                  }
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        controller.statusMessage ?? 'Order updated',
+                      ),
+                    ),
+                  );
                 },
                 child: const Text('Submit Order'),
               ),
