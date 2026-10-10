@@ -20,6 +20,79 @@ void main() {
   GoogleFonts.config.allowRuntimeFetching = false;
 
   testWidgets(
+    'phone cart keeps customer panel and totals reachable without overflow',
+    (tester) async {
+      tester.view.physicalSize = const Size(430, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final db = _UnusedDatabase();
+      final controller = PosHomeController(
+        instanceUrl: 'http://test.local',
+        bootstrap: PosPreviewData.bootstrap,
+        session: PosPreviewData.session,
+        cacheRepository: PosCacheRepository(db),
+        orderRepository: LocalOrderRepository(db),
+      );
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: NeuradixTheme.light(),
+          home: Scaffold(
+            body: NeuradixPreviewShellView(controller: controller),
+          ),
+        ),
+      );
+      await tester.tap(find.text('View cart (0) · 0.00'));
+      await tester.pumpAndSettle();
+      expect(find.text('CUSTOMER'), findsOneWidget);
+      expect(find.text('Current order'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'reference grid uses three tablet columns and preview does not add',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      var adds = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: NeuradixTheme.light(),
+          home: Scaffold(
+            body: SizedBox(
+              width: 800,
+              child: CatalogProductGrid(
+                group: PosPreviewData.catalog.first,
+                instanceUrl: 'http://test.local',
+                onAddItem: (_) => adds++,
+              ),
+            ),
+          ),
+        ),
+      );
+      final grid = tester.widget<GridView>(find.byType(GridView));
+      expect(
+        (grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount)
+            .crossAxisCount,
+        3,
+      );
+      await tester.tap(find.byTooltip('Product details').first);
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(adds, 0);
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Add to cart').first);
+      expect(adds, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'tablet shelves scroll together and long press previews without adding',
     (tester) async {
       tester.view.physicalSize = const Size(1280, 900);

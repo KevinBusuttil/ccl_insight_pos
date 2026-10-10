@@ -1,3 +1,8 @@
+## Reference tablet layout (2026-10-10)
+- CatalogProductGrid replaces category shelves in Order: adaptive up-to-three columns, name-first cards, fixed full-width search, real stock/UOM/rates. Product preview preserved.
+- Sidebar narrowed to 90 while retaining backend menu accent colors. Customer controls/account details moved above Current order in right pane; cart quantity row below names; empty parked panel hidden.
+- Regression test in test/widget_test.dart; run complete single trigger before release.
+
 ## Tablet category shelves (2026-10-09)
 - Order controls remain outside scrolling catalog. Compact workspace no longer scrolls its fixed-height parent. Search expands beside compact customer/account controls.
 - CatalogCategoryShelf: horizontal linked two-row tablet grids, one row on smaller screens; search uses wrapped result cards. Card long press or Product details opens showCatalogItemPreview without adding.

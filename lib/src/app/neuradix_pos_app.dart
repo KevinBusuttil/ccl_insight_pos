@@ -5259,7 +5259,7 @@ class _LeftRail extends StatelessWidget {
   final ValueChanged<String> onSelect;
   final List<({String label, IconData icon})>? items;
 
-  static const double _railWidth = 132;
+  static const double _railWidth = 90;
 
   @override
   Widget build(BuildContext context) {
@@ -5288,28 +5288,7 @@ class _LeftRail extends StatelessWidget {
         ),
         child: Column(
           children: <Widget>[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primary,
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                child: SizedBox(
-                  height: 92,
-                  width: double.infinity,
-                  child: Center(
-                    child: Text(
-                      brandName.isEmpty ? 'Q' : brandName.substring(0, 1),
-                      style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onPrimary,
-                        fontSize: 38,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
+            const SizedBox(height: 12),
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -5387,16 +5366,16 @@ class _RailButton extends StatelessWidget {
         color: Colors.transparent,
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(22),
+          borderRadius: BorderRadius.circular(10),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 160),
             curve: Curves.easeOutCubic,
             width: double.infinity,
-            constraints: const BoxConstraints.tightFor(height: 108),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+            constraints: const BoxConstraints.tightFor(height: 78),
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
             decoration: BoxDecoration(
               color: selected ? accent.withValues(alpha: 0.12) : Colors.white,
-              borderRadius: BorderRadius.circular(22),
+              borderRadius: BorderRadius.circular(10),
               border: Border.all(
                 color: selected ? accent.withValues(alpha: 0.45) : borderColor,
               ),
@@ -5415,8 +5394,8 @@ class _RailButton extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
-                Icon(icon, size: 28, color: accent),
-                const SizedBox(height: 10),
+                Icon(icon, size: 24, color: accent),
+                const SizedBox(height: 6),
                 Text(
                   label,
                   maxLines: 2,
@@ -5424,7 +5403,7 @@ class _RailButton extends StatelessWidget {
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.labelLarge?.copyWith(
                     color: accent,
-                    fontSize: 14,
+                    fontSize: 12,
                     height: 1.12,
                     fontWeight: FontWeight.w800,
                   ),
@@ -5753,11 +5732,13 @@ class _OrderViewState extends State<_OrderView> {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  SizedBox(
-                    width: constraints.maxWidth < 700 ? 140 : 250,
-                    child: _SelectedCustomerBanner(controller: controller),
-                  ),
+                  if (isCompact) ...[
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 140,
+                      child: _SelectedCustomerBanner(controller: controller),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -5948,11 +5929,58 @@ class _CatalogGroupSection extends StatelessWidget {
   final ValueChanged<PosCatalogItem> onAddItem;
   final bool searchResults;
   @override
-  Widget build(BuildContext context) => CatalogCategoryShelf(
+  Widget build(BuildContext context) => CatalogProductGrid(
     group: group,
     instanceUrl: instanceUrl,
     onAddItem: onAddItem,
-    searchResults: searchResults,
+  );
+}
+
+class CatalogProductGrid extends StatelessWidget {
+  const CatalogProductGrid({
+    super.key,
+    required this.group,
+    required this.instanceUrl,
+    required this.onAddItem,
+  });
+  final PosCatalogGroup group;
+  final String instanceUrl;
+  final ValueChanged<PosCatalogItem> onAddItem;
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final columns = (constraints.maxWidth / 240).floor().clamp(1, 3);
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              group.groupName,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 10),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: group.items.length,
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: columns,
+                mainAxisExtent: 200,
+                mainAxisSpacing: 10,
+                crossAxisSpacing: 10,
+              ),
+              itemBuilder:
+                  (context, index) => _CatalogItemCard(
+                    item: group.items[index],
+                    instanceUrl: instanceUrl,
+                    onAddItem: onAddItem,
+                  ),
+            ),
+          ],
+        ),
+      );
+    },
   );
 }
 
@@ -6097,111 +6125,72 @@ class _CatalogItemCard extends StatelessWidget {
     required this.instanceUrl,
     required this.onAddItem,
   });
-
   final PosCatalogItem item;
   final String instanceUrl;
   final ValueChanged<PosCatalogItem> onAddItem;
-
   @override
-  Widget build(BuildContext context) {
-    final imageProvider = buildCatalogImageProvider(
-      instanceUrl: instanceUrl,
-      item: item,
-    );
-    return SizedBox(
-      width: 182,
-      child: Card(
-        child: InkWell(
-          onTap: () => onAddItem(item),
-          onLongPress:
-              () =>
-                  showCatalogItemPreview(context, item, instanceUrl, onAddItem),
-          borderRadius: BorderRadius.circular(18),
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Container(
-                  height: 54,
-                  width: 54,
-                  decoration: BoxDecoration(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.primary.withValues(alpha: 0.09),
-                    borderRadius: BorderRadius.circular(14),
+  Widget build(BuildContext context) => Card(
+    child: InkWell(
+      onTap: () => onAddItem(item),
+      onLongPress:
+          () => showCatalogItemPreview(context, item, instanceUrl, onAddItem),
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              item.displayName,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const Spacer(),
+            Text(item.defaultUom, style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(height: 4),
+            Text(
+              'Stock: ${item.stockQty.toStringAsFixed(0)}',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    item.pricingAvailable
+                        ? item.price.toStringAsFixed(2)
+                        : 'Price unavailable',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
-                  clipBehavior: Clip.antiAlias,
-                  child:
-                      imageProvider == null
-                          ? Icon(
-                            Icons.local_offer_outlined,
-                            color: Theme.of(context).colorScheme.primary,
-                          )
-                          : Image(
-                            image: imageProvider,
-                            fit: BoxFit.cover,
-                            errorBuilder:
-                                (_, __, ___) => Icon(
-                                  Icons.local_offer_outlined,
-                                  color: Theme.of(context).colorScheme.primary,
-                                ),
-                          ),
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  item.displayName,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  '${item.stockQty.toStringAsFixed(0)} in stock',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: <Widget>[
-                    Expanded(
-                      child: Text(
-                        item.pricingAvailable
-                            ? item.price.toStringAsFixed(2)
-                            : 'Price unavailable',
-                        style: Theme.of(
-                          context,
-                        ).textTheme.headlineMedium?.copyWith(fontSize: 20),
+                IconButton(
+                  tooltip: 'Product details',
+                  onPressed:
+                      () => showCatalogItemPreview(
+                        context,
+                        item,
+                        instanceUrl,
+                        onAddItem,
                       ),
-                    ),
-                    IconButton(
-                      tooltip: 'Product details',
-                      onPressed:
-                          () => showCatalogItemPreview(
-                            context,
-                            item,
-                            instanceUrl,
-                            onAddItem,
-                          ),
-                      icon: const Icon(Icons.info_outline, size: 18),
-                    ),
-                    CircleAvatar(
-                      radius: 14,
-                      backgroundColor: Theme.of(context).colorScheme.primary,
-                      child: Icon(
-                        Icons.add,
-                        size: 18,
-                        color: Theme.of(context).colorScheme.onPrimary,
-                      ),
-                    ),
-                  ],
+                  icon: const Icon(Icons.info_outline, size: 18),
+                ),
+                IconButton.filledTonal(
+                  tooltip: 'Add to cart',
+                  onPressed: () => onAddItem(item),
+                  icon: const Icon(Icons.add),
                 ),
               ],
             ),
-          ),
+          ],
         ),
       ),
-    );
-  }
+    ),
+  );
 }
 
 class _CartPanel extends StatelessWidget {
@@ -6225,99 +6214,104 @@ class _CartPanel extends StatelessWidget {
           const PosLoadingIndicator(label: 'Updating cart prices…'),
         compact
             ? SizedBox(
-              height: 560,
+              height: 760,
               child: _buildOrderCard(context, policy, false),
             )
             : Expanded(child: _buildOrderCard(context, policy, true)),
-        const SizedBox(height: 14),
-        SizedBox(
-          height: compact ? 240 : 150,
-          child: Card(
-            child: Padding(
-              padding: const EdgeInsets.all(18),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Row(
-                    children: <Widget>[
-                      Expanded(
-                        child: Text(
-                          'Parked Orders',
-                          style: Theme.of(context).textTheme.titleLarge,
+        if (controller.parkedOrders.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          SizedBox(
+            height: compact ? 240 : 150,
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Text(
+                            'Parked Orders',
+                            style: Theme.of(context).textTheme.titleLarge,
+                          ),
                         ),
-                      ),
-                      _Badge(
-                        label: '${controller.parkedOrders.length}',
-                        tone: _BadgeTone.neutral,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Expanded(
-                    child:
-                        controller.parkedOrders.isEmpty
-                            ? const Center(
-                              child: Text('No parked orders on this device'),
-                            )
-                            : ListView.builder(
-                              itemCount: controller.parkedOrders.length,
-                              itemBuilder: (BuildContext context, int index) {
-                                final order = controller.parkedOrders[index];
-                                return Padding(
-                                  padding: const EdgeInsets.only(bottom: 12),
-                                  child: Row(
-                                    children: <Widget>[
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: <Widget>[
-                                            Text(
-                                              order.customerId,
-                                              style:
-                                                  Theme.of(
-                                                    context,
-                                                  ).textTheme.titleLarge,
-                                            ),
-                                            Text(
-                                              order.updatedAtIso
-                                                  .split('T')
-                                                  .first,
-                                              style:
-                                                  Theme.of(
-                                                    context,
-                                                  ).textTheme.bodyMedium,
-                                            ),
-                                          ],
+                        _Badge(
+                          label: '${controller.parkedOrders.length}',
+                          tone: _BadgeTone.neutral,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Expanded(
+                      child:
+                          controller.parkedOrders.isEmpty
+                              ? const Center(
+                                child: Text('No parked orders on this device'),
+                              )
+                              : ListView.builder(
+                                itemCount: controller.parkedOrders.length,
+                                itemBuilder: (BuildContext context, int index) {
+                                  final order = controller.parkedOrders[index];
+                                  return Padding(
+                                    padding: const EdgeInsets.only(bottom: 12),
+                                    child: Row(
+                                      children: <Widget>[
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: <Widget>[
+                                              Text(
+                                                order.customerId,
+                                                style:
+                                                    Theme.of(
+                                                      context,
+                                                    ).textTheme.titleLarge,
+                                              ),
+                                              Text(
+                                                order.updatedAtIso
+                                                    .split('T')
+                                                    .first,
+                                                style:
+                                                    Theme.of(
+                                                      context,
+                                                    ).textTheme.bodyMedium,
+                                              ),
+                                            ],
+                                          ),
                                         ),
-                                      ),
-                                      IconButton(
-                                        onPressed:
-                                            () => controller.loadParkedOrder(
-                                              order,
-                                            ),
-                                        icon: const Icon(
-                                          Icons.playlist_add_check,
+                                        IconButton(
+                                          onPressed:
+                                              () => controller.loadParkedOrder(
+                                                order,
+                                              ),
+                                          icon: const Icon(
+                                            Icons.playlist_add_check,
+                                          ),
                                         ),
-                                      ),
-                                      IconButton(
-                                        onPressed:
-                                            () => controller.discardParkedOrder(
-                                              order.clientOrderId,
-                                            ),
-                                        icon: const Icon(Icons.delete_outline),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
-                            ),
-                  ),
-                ],
+                                        IconButton(
+                                          onPressed:
+                                              () =>
+                                                  controller.discardParkedOrder(
+                                                    order.clientOrderId,
+                                                  ),
+                                          icon: const Icon(
+                                            Icons.delete_outline,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
-        ),
+        ],
       ],
     );
   }
@@ -6335,43 +6329,37 @@ class _CartPanel extends StatelessWidget {
               separatorBuilder: (_, __) => const Divider(height: 18),
               itemBuilder: (BuildContext context, int index) {
                 final line = controller.cartLines[index];
-                return Row(
+                return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          Text(
-                            line.displayName,
-                            style: Theme.of(context).textTheme.titleLarge,
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            controller.hasCurrentPrices
-                                ? '${line.price.toStringAsFixed(2)} per ${line.uom}'
-                                : 'Awaiting customer prices',
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                          if (line.notes.trim().isNotEmpty)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 6),
-                              child: Text(
-                                'Note: ${line.notes}',
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                            ),
-                        ],
-                      ),
+                  children: [
+                    Text(
+                      line.displayName,
+                      style: Theme.of(context).textTheme.titleMedium,
                     ),
-                    IconButton(
-                      onPressed: () => _showLineNotesDialog(context, line),
-                      icon: const Icon(Icons.sticky_note_2_outlined),
+                    Text(
+                      controller.hasCurrentPrices
+                          ? '${line.price.toStringAsFixed(2)} per ${line.uom}'
+                          : 'Awaiting customer prices',
                     ),
-                    _QuantityEditor(
-                      qty: line.qty,
-                      onDecrease: () => controller.changeLineQuantity(line, -1),
-                      onIncrease: () => controller.changeLineQuantity(line, 1),
+                    if (line.notes.trim().isNotEmpty)
+                      Text('Note: ${line.notes}'),
+                    Row(
+                      children: [
+                        _QuantityEditor(
+                          qty: line.qty,
+                          onDecrease:
+                              () => controller.changeLineQuantity(line, -1),
+                          onIncrease:
+                              () => controller.changeLineQuantity(line, 1),
+                        ),
+                        IconButton(
+                          tooltip: 'Item note',
+                          onPressed: () => _showLineNotesDialog(context, line),
+                          icon: const Icon(Icons.sticky_note_2_outlined),
+                        ),
+                        const Spacer(),
+                        Text((line.price * line.qty).toStringAsFixed(2)),
+                      ],
                     ),
                   ],
                 );
@@ -6384,13 +6372,34 @@ class _CartPanel extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text('Order', style: Theme.of(context).textTheme.headlineMedium),
-            SizedBox(height: expandList ? 6 : 8),
-            Text(
-              controller.selectedCustomer?.displayName ??
-                  'Waiting for customer',
-              style: Theme.of(context).textTheme.bodyLarge,
+            Row(
+              children: [
+                const Expanded(child: Text('CUSTOMER')),
+                IconButton(
+                  tooltip: 'Choose Customer',
+                  onPressed: () => controller.selectView('Customer'),
+                  icon: const Icon(Icons.person_outline),
+                ),
+              ],
             ),
+            _SelectedCustomerBanner(controller: controller),
+            if (controller.selectedCustomer != null &&
+                controller.hasCurrentPrices)
+              const Text('Agreement prices applied'),
+            const Divider(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Current order',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                Text('${controller.cartLines.length} lines'),
+              ],
+            ),
+            SizedBox(height: expandList ? 6 : 8),
+
             if (policy != null &&
                 (policy.hasOutstandingDocuments ||
                     policy.isFrozen)) ...<Widget>[
