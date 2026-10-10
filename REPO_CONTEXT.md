@@ -1,3 +1,7 @@
+## Exact reference tablet correction (2026-10-11)
+- Actual Medium_Tablet logical size 1280x800. Width alone selects tablet layout at >=700; old height<650 rule incorrectly hid cart. Regression covers full shell at actual dimensions and sticky search.
+- Dedicated shell uses 60px full-width header, neutral reference typography/borders and flat sidebar with original icon accents. ReferenceProductGrid lazy three-column cards; ReferenceOrderPanel owns customer/account, cart, pinned Total and review dialog. Notes/parking/submission remain in review. No illustrative stock/prices copied.
+
 ## Reference tablet layout (2026-10-10)
 - CatalogProductGrid replaces category shelves in Order: adaptive up-to-three columns, name-first cards, fixed full-width search, real stock/UOM/rates. Product preview preserved.
 - Sidebar narrowed to 90 while retaining backend menu accent colors. Customer controls/account details moved above Current order in right pane; cart quantity row below names; empty parked panel hidden.

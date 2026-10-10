@@ -98,13 +98,13 @@ bool _sameBootstrapConfig(BootstrapConfig left, BootstrapConfig right) {
 bool posOrderUsesCompactLayout(
   double maxWidth, {
   double maxHeight = double.infinity,
-}) => maxWidth < 1040 || maxHeight < 650;
+}) => maxWidth < 700;
 
 double posOrderCartPanelWidth(double maxWidth) {
   if (posOrderUsesCompactLayout(maxWidth)) {
     return double.infinity;
   }
-  return maxWidth < 1280 ? 340.0 : 405.0;
+  return (maxWidth * .34).clamp(290.0, 500.0);
 }
 
 bool hostedSalesUsesCompactLayout(double maxWidth) => maxWidth < 920;
@@ -5151,73 +5151,152 @@ class _PosShellView extends StatelessWidget {
     return AnimatedBuilder(
       animation: controller,
       builder: (BuildContext context, Widget? child) {
-        return Row(
-          children: <Widget>[
-            if (MediaQuery.sizeOf(context).width >= 700)
-              _LeftRail(
-                palette: controller.bootstrap.theme,
-                brandName: brandName,
-                selectedView: controller.selectedView,
-                onSelect: controller.selectView,
-              ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
-                child: Column(
-                  children: <Widget>[
-                    if (MediaQuery.sizeOf(context).width < 700)
-                      DropdownButton<String>(
-                        isExpanded: true,
-                        value: controller.selectedView,
-                        items:
-                            [
-                                  'Order',
-                                  'Customer',
-                                  'Plan & Sync',
-                                  'History',
-                                  'My Profile',
-                                ]
-                                .map(
-                                  (name) => DropdownMenuItem(
-                                    value: name,
-                                    child: Text(name),
-                                  ),
-                                )
-                                .toList(),
-                        onChanged: (value) {
-                          if (value != null) controller.selectView(value);
-                        },
-                      ),
-                    PosShellHeader(
-                      brandName: brandName,
-                      onRefresh: controller.refreshFromBackend,
-                      onEditInstance: onEditInstance,
-                      onLogout: onLogout,
-                    ),
-                    const SizedBox(height: 16),
-                    if (controller.statusMessage != null) ...<Widget>[
-                      _InlineMessage(
-                        message: controller.statusMessage!,
-                        backgroundColor:
-                            controller.isOffline
-                                ? const Color(0xFFFFF1D6)
-                                : const Color(0xFFE9F7EE),
-                      ),
-                      const SizedBox(height: 12),
-                    ],
-                    if (controller.isBusy)
-                      PosLoadingIndicator(
-                        label:
-                            controller.isCustomerLoading
-                                ? 'Loading customer prices and account…'
-                                : 'Fetching prices / syncing data…',
-                      ),
-                    Expanded(child: _buildSelectedView(context)),
-                  ],
-                ),
-              ),
+        final base = Theme.of(context);
+        final referenceTheme = base.copyWith(
+          scaffoldBackgroundColor: const Color(0xFFF3F7F7),
+          textTheme: ThemeData.light().textTheme.apply(
+            bodyColor: const Color(0xFF233C44),
+            displayColor: const Color(0xFF233C44),
+          ),
+          cardTheme: CardTheme(
+            color: Colors.white,
+            elevation: 0,
+            margin: EdgeInsets.zero,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+              side: const BorderSide(color: Color(0xFFD8E1E3)),
             ),
-          ],
+          ),
+          inputDecorationTheme: const InputDecorationTheme(
+            filled: true,
+            fillColor: Colors.white,
+            contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.all(Radius.circular(10)),
+              borderSide: BorderSide(color: Color(0xFFD8E1E3)),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.all(Radius.circular(10)),
+              borderSide: BorderSide(color: Color(0xFFD8E1E3)),
+            ),
+          ),
+        );
+        return Theme(
+          data: referenceTheme,
+          child: Builder(
+            builder:
+                (context) => ColoredBox(
+                  color: const Color(0xFFF3F7F7),
+                  child: Column(
+                    children: [
+                      Container(
+                        height: 60,
+                        color: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                brandName,
+                                style: const TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                            PopupMenuButton<String>(
+                              tooltip: 'Settings',
+                              icon: const Icon(Icons.more_horiz),
+                              onSelected: (value) {
+                                if (value == 'refresh') {
+                                  controller.refreshFromBackend();
+                                }
+                                if (value == 'instance') onEditInstance();
+                                if (value == 'logout') onLogout();
+                              },
+                              itemBuilder:
+                                  (_) => const [
+                                    PopupMenuItem(
+                                      value: 'refresh',
+                                      child: Text('Refresh'),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'instance',
+                                      child: Text('Instance settings'),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'logout',
+                                      child: Text('Logout'),
+                                    ),
+                                  ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Divider(height: 1),
+                      Expanded(
+                        child: Row(
+                          children: [
+                            if (MediaQuery.sizeOf(context).width >= 700)
+                              _LeftRail(
+                                palette: controller.bootstrap.theme,
+                                brandName: brandName,
+                                selectedView: controller.selectedView,
+                                onSelect: controller.selectView,
+                              ),
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.all(18),
+                                child: Column(
+                                  children: [
+                                    if (MediaQuery.sizeOf(context).width < 700)
+                                      DropdownButton<String>(
+                                        isExpanded: true,
+                                        value: controller.selectedView,
+                                        items:
+                                            [
+                                                  'Order',
+                                                  'Customer',
+                                                  'Plan & Sync',
+                                                  'History',
+                                                  'My Profile',
+                                                ]
+                                                .map(
+                                                  (v) => DropdownMenuItem(
+                                                    value: v,
+                                                    child: Text(v),
+                                                  ),
+                                                )
+                                                .toList(),
+                                        onChanged: (v) {
+                                          if (v != null) {
+                                            controller.selectView(v);
+                                          }
+                                        },
+                                      ),
+                                    if (controller.isBusy)
+                                      PosLoadingIndicator(
+                                        label:
+                                            controller.isCustomerLoading
+                                                ? 'Loading customer prices and account…'
+                                                : 'Fetching prices / syncing data…',
+                                      ),
+                                    if (controller.isOffline)
+                                      const Text('Offline • cached prices'),
+                                    Expanded(
+                                      child: _buildSelectedView(context),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+          ),
         );
       },
     );
@@ -5309,30 +5388,6 @@ class _LeftRail extends StatelessWidget {
                 ),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surface,
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(
-                    color:
-                        Theme.of(context).dividerTheme.color ??
-                        const Color(0x14000000),
-                  ),
-                ),
-                child: SizedBox(
-                  height: 44,
-                  width: double.infinity,
-                  child: Icon(
-                    Icons.storefront_outlined,
-                    color: Theme.of(
-                      context,
-                    ).iconTheme.color?.withValues(alpha: 0.85),
-                  ),
-                ),
-              ),
-            ),
           ],
         ),
       ),
@@ -5357,9 +5412,6 @@ class _RailButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final borderColor =
-        Theme.of(context).dividerTheme.color ?? const Color(0x14000000);
-
     return Tooltip(
       message: label,
       child: Material(
@@ -5376,19 +5428,7 @@ class _RailButton extends StatelessWidget {
             decoration: BoxDecoration(
               color: selected ? accent.withValues(alpha: 0.12) : Colors.white,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                color: selected ? accent.withValues(alpha: 0.45) : borderColor,
-              ),
-              boxShadow:
-                  selected
-                      ? <BoxShadow>[
-                        BoxShadow(
-                          color: accent.withValues(alpha: 0.12),
-                          blurRadius: 18,
-                          offset: const Offset(0, 8),
-                        ),
-                      ]
-                      : const <BoxShadow>[],
+              border: Border.all(color: Colors.transparent),
             ),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -5402,7 +5442,7 @@ class _RailButton extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    color: accent,
+                    color: const Color(0xFF5D7078),
                     fontSize: 12,
                     height: 1.12,
                     fontWeight: FontWeight.w800,
@@ -5478,7 +5518,9 @@ class CategoryMultiSelect extends StatefulWidget {
     required this.categories,
     required this.selected,
     required this.onChanged,
+    this.referenceStyle = false,
   });
+  final bool referenceStyle;
   final List<String> categories;
   final Set<String> selected;
   final ValueChanged<Set<String>> onChanged;
@@ -5496,15 +5538,45 @@ class _CategoryMultiSelectState extends State<CategoryMultiSelect> {
       Row(
         children: [
           Expanded(
-            child: TextButton.icon(
-              onPressed: () => setState(() => expanded = !expanded),
-              icon: Icon(expanded ? Icons.expand_less : Icons.expand_more),
-              label: Text(
-                widget.selected.isEmpty
-                    ? 'Categories · All'
-                    : 'Categories · ${widget.selected.length} selected',
-              ),
-            ),
+            child:
+                widget.referenceStyle
+                    ? Align(
+                      alignment: Alignment.centerLeft,
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          side: const BorderSide(color: Color(0xFFD8E1E3)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          padding: const EdgeInsets.all(14),
+                        ),
+                        onPressed: () => setState(() => expanded = !expanded),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              widget.selected.isEmpty
+                                  ? 'All wines'
+                                  : '${widget.selected.length} categories',
+                            ),
+                            const SizedBox(width: 20),
+                            const Icon(Icons.expand_more),
+                          ],
+                        ),
+                      ),
+                    )
+                    : TextButton.icon(
+                      onPressed: () => setState(() => expanded = !expanded),
+                      icon: Icon(
+                        expanded ? Icons.expand_less : Icons.expand_more,
+                      ),
+                      label: Text(
+                        widget.selected.isEmpty
+                            ? 'Categories · All'
+                            : 'Categories · ${widget.selected.length} selected',
+                      ),
+                    ),
           ),
           if (widget.selected.isNotEmpty)
             TextButton(
@@ -5742,42 +5814,42 @@ class _OrderViewState extends State<_OrderView> {
                 ],
               ),
             ),
-            CategoryMultiSelect(
-              categories: controller.allCategories,
-              selected: controller.selectedCategories,
-              onChanged: controller.setCategories,
+            Row(
+              children: [
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: CategoryMultiSelect(
+                      referenceStyle: true,
+                      categories: controller.allCategories,
+                      selected: controller.selectedCategories,
+                      onChanged: controller.setCategories,
+                    ),
+                  ),
+                ),
+                Text(
+                  '${controller.catalogGroups.fold<int>(0, (n, g) => n + g.items.length)} products',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             Expanded(
-              child: _SectionCard(
-                child:
-                    controller.catalogGroups.isEmpty
-                        ? const Center(child: Text('No items found'))
-                        : ListView(
-                          children: controller.catalogGroups
-                              .map(
-                                (PosCatalogGroup group) => _CatalogGroupSection(
-                                  group: group,
-                                  instanceUrl: controller.instanceUrl,
-                                  onAddItem: controller.addItem,
-                                  searchResults:
-                                      controller.catalogSearch
-                                          .trim()
-                                          .isNotEmpty,
-                                ),
-                              )
-                              .toList(growable: false),
-                        ),
+              child: ReferenceProductGrid(
+                items: controller.catalogGroups
+                    .expand((g) => g.items)
+                    .toList(growable: false),
+                instanceUrl: controller.instanceUrl,
+                onAddItem: controller.addItem,
               ),
             ),
           ],
         );
         final cartPanel = SizedBox(
           width: cartPanelWidth,
-          child: _CartPanel(
+          child: ReferenceOrderPanel(
             controller: controller,
             notesController: _notesController,
-            compact: isCompact,
           ),
         );
 
@@ -5915,25 +5987,6 @@ class _SelectedCustomerBanner extends StatelessWidget {
       },
     );
   }
-}
-
-class _CatalogGroupSection extends StatelessWidget {
-  const _CatalogGroupSection({
-    required this.group,
-    required this.instanceUrl,
-    required this.onAddItem,
-    this.searchResults = false,
-  });
-  final PosCatalogGroup group;
-  final String instanceUrl;
-  final ValueChanged<PosCatalogItem> onAddItem;
-  final bool searchResults;
-  @override
-  Widget build(BuildContext context) => CatalogProductGrid(
-    group: group,
-    instanceUrl: instanceUrl,
-    onAddItem: onAddItem,
-  );
 }
 
 class CatalogProductGrid extends StatelessWidget {
@@ -6119,6 +6172,379 @@ Future<void> showCatalogItemPreview(
   },
 );
 
+class ReferenceProductGrid extends StatelessWidget {
+  const ReferenceProductGrid({
+    super.key,
+    required this.items,
+    required this.instanceUrl,
+    required this.onAddItem,
+  });
+  final List<PosCatalogItem> items;
+  final String instanceUrl;
+  final ValueChanged<PosCatalogItem> onAddItem;
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder:
+        (context, c) => GridView.builder(
+          itemCount: items.length,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount:
+                c.maxWidth >= 520
+                    ? 3
+                    : c.maxWidth >= 360
+                    ? 2
+                    : 1,
+            mainAxisExtent: ((c.maxHeight - 24) / 3).clamp(176.0, 212.0),
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 12,
+          ),
+          itemBuilder:
+              (context, i) => _CatalogItemCard(
+                item: items[i],
+                instanceUrl: instanceUrl,
+                onAddItem: onAddItem,
+              ),
+        ),
+  );
+}
+
+class ReferenceOrderPanel extends StatelessWidget {
+  const ReferenceOrderPanel({
+    super.key,
+    required this.controller,
+    required this.notesController,
+  });
+  final PosHomeController controller;
+  final TextEditingController notesController;
+  @override
+  Widget build(BuildContext context) {
+    final customer = controller.selectedCustomer;
+    final policy = controller.selectedPolicy;
+    return Card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'CUSTOMER',
+                        style: TextStyle(
+                          color: Color(0xFF5D7078),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Choose Customer',
+                      onPressed: () => controller.selectView('Customer'),
+                      icon: const Icon(Icons.person_outline),
+                    ),
+                  ],
+                ),
+                Text(
+                  customer?.displayName ?? 'Choose customer',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  controller.isBusy
+                      ? 'Updating agreement prices…'
+                      : controller.hasCurrentPrices
+                      ? 'Agreement prices applied'
+                      : 'Select a customer to load prices',
+                ),
+                if (policy?.minimumOrderRequired == true)
+                  Text(
+                    'Minimum order €${policy!.minimumOrderAmount.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: Color(0xFF5D7078),
+                    ),
+                  ),
+                if (policy?.isFrozen == true)
+                  const Text(
+                    'Frozen account • orders blocked',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed:
+                        controller.selectedIssueStatement == null
+                            ? null
+                            : () => _SelectedCustomerBanner(
+                              controller: controller,
+                            )._showIssueStatement(
+                              context,
+                              controller.selectedIssueStatement!,
+                            ),
+                    child: const Text('Account details'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.all(18),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Current order',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                  ),
+                ),
+                Text('${controller.cartLines.length} lines'),
+              ],
+            ),
+          ),
+          Expanded(
+            child:
+                controller.cartLines.isEmpty
+                    ? const Center(
+                      child: Text('Select products to start the order'),
+                    )
+                    : ListView.separated(
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
+                      itemCount: controller.cartLines.length,
+                      separatorBuilder: (_, __) => const Divider(height: 24),
+                      itemBuilder: (context, i) {
+                        final line = controller.cartLines[i];
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              line.displayName,
+                              style: const TextStyle(fontSize: 17),
+                            ),
+                            Text(
+                              '${line.uom} · €${line.price.toStringAsFixed(2)} each',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: Color(0xFF5D7078),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                _ReferenceQuantity(
+                                  qty: line.qty,
+                                  onDecrease:
+                                      () => controller.changeLineQuantity(
+                                        line,
+                                        -1,
+                                      ),
+                                  onIncrease:
+                                      () => controller.changeLineQuantity(
+                                        line,
+                                        1,
+                                      ),
+                                ),
+                                const Spacer(),
+                                Text(
+                                  '€${(line.price * line.qty).toStringAsFixed(2)}',
+                                ),
+                              ],
+                            ),
+                            if (line.notes.isNotEmpty) Text(line.notes),
+                          ],
+                        );
+                      },
+                    ),
+          ),
+          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Total',
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      '€${controller.grandTotal.toStringAsFixed(2)}',
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+                if (policy?.minimumOrderRequired == true)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      controller.grandTotal >= policy!.minimumOrderAmount
+                          ? '€${policy.minimumOrderAmount.toStringAsFixed(0)} minimum reached'
+                          : '€${policy.minimumOrderAmount.toStringAsFixed(0)} minimum order',
+                      style: const TextStyle(color: Color(0xFF5D7078)),
+                    ),
+                  ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF2B7379),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    onPressed:
+                        controller.isBusy ? null : () => _review(context),
+                    child: const Text('Review order'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _review(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Review order'),
+            content: SizedBox(
+              width: 600,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      controller.selectedCustomer?.displayName ??
+                          'Choose a customer',
+                    ),
+                    if (controller.parkedOrders.isNotEmpty)
+                      ExpansionTile(
+                        title: const Text('Parked orders'),
+                        children: [
+                          for (final parked in controller.parkedOrders)
+                            ListTile(
+                              title: Text(parked.customerId),
+                              subtitle: Text(parked.updatedAtIso),
+                              onTap: () {
+                                Navigator.pop(context);
+                                controller.loadParkedOrder(parked);
+                              },
+                            ),
+                        ],
+                      ),
+                    for (final line in controller.cartLines)
+                      ListTile(
+                        title: Text(line.displayName),
+                        subtitle: Text(
+                          '${line.qty} ${line.uom} · €${line.price.toStringAsFixed(2)}',
+                        ),
+                        trailing: IconButton(
+                          tooltip: 'Item note',
+                          icon: const Icon(Icons.sticky_note_2_outlined),
+                          onPressed:
+                              () => _CartPanel(
+                                controller: controller,
+                                notesController: notesController,
+                                compact: true,
+                              )._showLineNotesDialog(context, line),
+                        ),
+                      ),
+                    Text('Total €${controller.grandTotal.toStringAsFixed(2)}'),
+                    TextFormField(
+                      initialValue: controller.orderNotes,
+                      onChanged: controller.setOrderNotes,
+                      decoration: const InputDecoration(
+                        labelText: 'Order notes',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Back'),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  controller.parkCurrentOrder();
+                },
+                child: const Text('Park Order'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  controller.submitCurrentOrder();
+                },
+                child: const Text('Submit Order'),
+              ),
+            ],
+          ),
+    );
+  }
+}
+
+class _ReferenceQuantity extends StatelessWidget {
+  const _ReferenceQuantity({
+    required this.qty,
+    required this.onDecrease,
+    required this.onIncrease,
+  });
+  final int qty;
+  final VoidCallback onDecrease, onIncrease;
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      _button(Icons.remove, onDecrease),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Text('$qty'),
+      ),
+      _button(Icons.add, onIncrease),
+    ],
+  );
+  Widget _button(IconData icon, VoidCallback action) => SizedBox(
+    width: 44,
+    height: 44,
+    child: OutlinedButton(
+      onPressed: action,
+      style: OutlinedButton.styleFrom(
+        padding: EdgeInsets.zero,
+        side: const BorderSide(color: Color(0xFFD8E1E3)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+      child: Icon(icon, size: 18, color: const Color(0xFF233C44)),
+    ),
+  );
+}
+
 class _CatalogItemCard extends StatelessWidget {
   const _CatalogItemCard({
     required this.item,
@@ -6134,7 +6560,7 @@ class _CatalogItemCard extends StatelessWidget {
       onTap: () => onAddItem(item),
       onLongPress:
           () => showCatalogItemPreview(context, item, instanceUrl, onAddItem),
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(10),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
@@ -6161,28 +6587,31 @@ class _CatalogItemCard extends StatelessWidget {
                 Expanded(
                   child: Text(
                     item.pricingAvailable
-                        ? item.price.toStringAsFixed(2)
+                        ? '€${item.price.toStringAsFixed(2)}'
                         : 'Price unavailable',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w800,
                     ),
                   ),
                 ),
-                IconButton(
-                  tooltip: 'Product details',
-                  onPressed:
-                      () => showCatalogItemPreview(
-                        context,
-                        item,
-                        instanceUrl,
-                        onAddItem,
+                SizedBox(
+                  width: 48,
+                  height: 48,
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
                       ),
-                  icon: const Icon(Icons.info_outline, size: 18),
-                ),
-                IconButton.filledTonal(
-                  tooltip: 'Add to cart',
-                  onPressed: () => onAddItem(item),
-                  icon: const Icon(Icons.add),
+                      side: const BorderSide(color: Color(0xFFD8E1E3)),
+                    ),
+                    onPressed: () => onAddItem(item),
+                    child: const Icon(
+                      Icons.add,
+                      size: 18,
+                      color: Color(0xFF233C44),
+                    ),
+                  ),
                 ),
               ],
             ),

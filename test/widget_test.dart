@@ -20,6 +20,45 @@ void main() {
   GoogleFonts.config.allowRuntimeFetching = false;
 
   testWidgets(
+    'actual tablet dimensions retain right cart and full-width header',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final db = _UnusedDatabase();
+      final controller = PosHomeController(
+        instanceUrl: 'http://test.local',
+        bootstrap: PosPreviewData.bootstrap,
+        session: PosPreviewData.session,
+        cacheRepository: PosCacheRepository(db),
+        orderRepository: LocalOrderRepository(db),
+        initialCatalog: PosPreviewData.catalog,
+      );
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: NeuradixPreviewShellView(controller: controller),
+          ),
+        ),
+      );
+      expect(find.byType(ReferenceOrderPanel), findsOneWidget);
+      expect(find.text('Review order'), findsOneWidget);
+      expect(find.byType(CompactOrderWorkspace), findsNothing);
+      final grid = find.byType(ReferenceProductGrid);
+      final before = tester.getRect(find.byType(TextField).first);
+      await tester.drag(grid, const Offset(0, -400));
+      await tester.pumpAndSettle();
+      expect(tester.getRect(find.byType(TextField).first), before);
+      await tester.tap(find.text('Review order'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'phone cart keeps customer panel and totals reachable without overflow',
     (tester) async {
       tester.view.physicalSize = const Size(430, 800);
@@ -80,13 +119,15 @@ void main() {
             .crossAxisCount,
         3,
       );
-      await tester.tap(find.byTooltip('Product details').first);
+      await tester.longPress(
+        find.text(PosPreviewData.catalog.first.items.first.displayName).first,
+      );
       await tester.pumpAndSettle();
       expect(find.byType(AlertDialog), findsOneWidget);
       expect(adds, 0);
       await tester.tap(find.text('Close'));
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Add to cart').first);
+      await tester.tap(find.byIcon(Icons.add).first);
       expect(adds, 1);
       expect(tester.takeException(), isNull);
     },
@@ -697,13 +738,13 @@ void main() {
   });
 
   test('keeps the medium-tablet order view in side-by-side mode', () {
-    expect(posOrderUsesCompactLayout(1039), isTrue);
-    expect(posOrderUsesCompactLayout(1040), isFalse);
-    expect(posOrderUsesCompactLayout(1280, maxHeight: 500), isTrue);
-    expect(posOrderUsesCompactLayout(1280, maxHeight: 800), isFalse);
-    expect(posOrderCartPanelWidth(1039), double.infinity);
-    expect(posOrderCartPanelWidth(1100), 340);
-    expect(posOrderCartPanelWidth(1280), 405);
+    expect(posOrderUsesCompactLayout(699), isTrue);
+    expect(posOrderUsesCompactLayout(700), isFalse);
+    expect(posOrderUsesCompactLayout(1154, maxHeight: 600), isFalse);
+    expect(posOrderUsesCompactLayout(1280, maxHeight: 500), isFalse);
+    expect(posOrderCartPanelWidth(699), double.infinity);
+    expect(posOrderCartPanelWidth(1100), closeTo(374, .01));
+    expect(posOrderCartPanelWidth(1280), closeTo(435.2, .01));
   });
 
   test('keeps the hosted sales cart visible on medium tablets', () {
