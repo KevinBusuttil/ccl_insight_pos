@@ -15,9 +15,105 @@ class _UnusedDatabase implements Database {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class _ActionController extends PosHomeController {
+  _ActionController(this.completed)
+    : super(
+        instanceUrl: 'http://test.local',
+        bootstrap: PosPreviewData.bootstrap,
+        session: PosPreviewData.session,
+        cacheRepository: PosCacheRepository(_UnusedDatabase()),
+        orderRepository: LocalOrderRepository(_UnusedDatabase()),
+      );
+  final bool completed;
+  int submits = 0;
+  int parks = 0;
+  @override
+  Future<bool> submitCurrentOrder() async {
+    submits++;
+    return completed;
+  }
+
+  @override
+  Future<bool> parkCurrentOrder() async {
+    parks++;
+    return completed;
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   GoogleFonts.config.allowRuntimeFetching = false;
+
+  for (final completed in [true, false]) {
+    for (final park in [true, false]) {
+      testWidgets(
+        'review ${park ? "park" : "submit"} closes only on completion=$completed after customer reset',
+        (tester) async {
+          final controller = _ActionController(completed);
+          final notes = TextEditingController();
+          addTearDown(controller.dispose);
+          addTearDown(notes.dispose);
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Scaffold(
+                body: SizedBox(
+                  width: 400,
+                  child: ReferenceOrderPanel(
+                    controller: controller,
+                    notesController: notes,
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.tap(find.text('Review order'));
+          await tester.pumpAndSettle();
+          await tester.tap(
+            find.descendant(
+              of: find.byType(AlertDialog),
+              matching: find.text(park ? 'Park Order' : 'Submit Order'),
+            ),
+          );
+          await tester.pumpAndSettle();
+          expect(controller.selectedCustomer, isNull);
+          expect(
+            find.byType(AlertDialog),
+            completed ? findsNothing : findsOneWidget,
+          );
+          expect(park ? controller.parks : controller.submits, 1);
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
+  testWidgets('footer exposes direct Submit and Park actions', (tester) async {
+    final controller = _ActionController(true);
+    final notes = TextEditingController();
+    addTearDown(controller.dispose);
+    addTearDown(notes.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 400,
+            child: ReferenceOrderPanel(
+              controller: controller,
+              notesController: notes,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Submit'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Park Order'));
+    await tester.pumpAndSettle();
+    expect(controller.submits, 1);
+    expect(controller.parks, 1);
+    expect(find.byType(AlertDialog), findsNothing);
+  });
 
   testWidgets(
     'actual tablet dimensions retain right cart and full-width header',

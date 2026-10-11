@@ -179,16 +179,16 @@ class PosHomeController extends ChangeNotifier {
     }
   }
 
-  Future<void> _submitQuotedOrder() async {
+  Future<bool> _submitQuotedOrder() async {
     if (isBusy) {
-      return;
+      return false;
     }
-    if (!await refreshCartQuote()) return;
+    if (!await refreshCartQuote()) return false;
     final validation = _validateOrder();
     if (validation != null) {
       _statusMessage = validation;
       notifyListeners();
-      return;
+      return false;
     }
     _busy = true;
     notifyListeners();
@@ -207,9 +207,11 @@ class PosHomeController extends ChangeNotifier {
       _quotedOrderClientId = null;
       _cartQuote = null;
       _statusMessage = 'Sales order $remote submitted successfully.';
+      return true;
     } on Exception catch (error) {
       _cartQuote = null;
       _statusMessage = 'Order not confirmed. Review prices and retry. $error';
+      return false;
     } finally {
       _busy = false;
       notifyListeners();
@@ -898,12 +900,12 @@ class PosHomeController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> parkCurrentOrder() async {
+  Future<bool> parkCurrentOrder() async {
     final validationMessage = _validateOrder(allowBelowMinimum: true);
     if (validationMessage != null) {
       _statusMessage = validationMessage;
       notifyListeners();
-      return;
+      return false;
     }
 
     final payload = _buildOrderPayload(customIsParked: true);
@@ -922,6 +924,7 @@ class PosHomeController extends ChangeNotifier {
     _statusMessage = 'Order parked locally for later edits.';
     _resetComposer();
     notifyListeners();
+    return true;
   }
 
   Future<void> loadParkedOrder(LocalOrder order) async {
@@ -996,16 +999,15 @@ class PosHomeController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> submitCurrentOrder() async {
+  Future<bool> submitCurrentOrder() async {
     if (_usesServerQuotes) {
-      await _submitQuotedOrder();
-      return;
+      return _submitQuotedOrder();
     }
     final validationMessage = _validateOrder();
     if (validationMessage != null) {
       _statusMessage = validationMessage;
       notifyListeners();
-      return;
+      return false;
     }
 
     _busy = true;
@@ -1052,6 +1054,7 @@ class PosHomeController extends ChangeNotifier {
     _resetComposer();
     _busy = false;
     notifyListeners();
+    return true;
   }
 
   Future<void> syncNowFlow({bool showSuccessMessage = true}) async {

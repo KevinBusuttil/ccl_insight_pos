@@ -518,7 +518,7 @@ void main() {
       controller.addItem(PosPreviewData.catalog.first.items.first);
       controller.addItem(PosPreviewData.catalog[1].items.first);
 
-      await controller.submitCurrentOrder();
+      expect(await controller.submitCurrentOrder(), isFalse);
 
       expect(controller.statusMessage, contains('Minimum order is 50.00 EUR.'));
       expect(await harness.orderRepository.queuedOrderCount(), 0);
@@ -529,7 +529,9 @@ void main() {
       );
       controller.setLineNotes(controller.cartLines[1], 'Split case accepted');
 
-      await controller.submitCurrentOrder();
+      expect(await controller.submitCurrentOrder(), isTrue);
+      expect(controller.selectedCustomer, isNull);
+      expect(controller.cartLines, isEmpty);
 
       expect(await harness.orderRepository.queuedOrderCount(), 1);
       expect(

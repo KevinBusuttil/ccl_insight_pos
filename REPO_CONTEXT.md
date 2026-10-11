@@ -1,3 +1,6 @@
+## Order action completion (2026-10-11)
+- Controller park/submit return explicit completion booleans, including server quote rejection. ReferenceOrderPanel closes review only on completion even after customer reset. Current order contains Review; footer Submit/Park actions share completion handling.
+
 ## Exact reference tablet correction (2026-10-11)
 - Actual Medium_Tablet logical size 1280x800. Width alone selects tablet layout at >=700; old height<650 rule incorrectly hid cart. Regression covers full shell at actual dimensions and sticky search.
 - Dedicated shell uses 60px full-width header, neutral reference typography/borders and flat sidebar with original icon accents. ReferenceProductGrid lazy three-column cards; ReferenceOrderPanel owns customer/account, cart, pinned Total and review dialog. Notes/parking/submission remain in review. No illustrative stock/prices copied.

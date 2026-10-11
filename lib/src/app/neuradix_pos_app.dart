@@ -6332,6 +6332,16 @@ class ReferenceOrderPanel extends StatelessWidget {
               ],
             ),
           ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 18),
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: controller.isBusy ? null : () => _review(context),
+                child: const Text('Review order'),
+              ),
+            ),
+          ),
           Expanded(
             child:
                 controller.cartLines.isEmpty
@@ -6422,26 +6432,51 @@ class ReferenceOrderPanel extends StatelessWidget {
                     ),
                   ),
                 const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF2B7379),
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed:
+                            controller.isBusy
+                                ? null
+                                : () => _complete(context, park: true),
+                        child: const Text('Park Order'),
                       ),
                     ),
-                    onPressed:
-                        controller.isBusy ? null : () => _review(context),
-                    child: const Text('Review order'),
-                  ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed:
+                            controller.isBusy
+                                ? null
+                                : () => _complete(context, park: false),
+                        child: const Text('Submit'),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Future<void> _complete(
+    BuildContext context, {
+    required bool park,
+    bool closeDialog = false,
+  }) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final completed =
+        park
+            ? await controller.parkCurrentOrder()
+            : await controller.submitCurrentOrder();
+    if (!context.mounted) return;
+    if (completed && closeDialog) Navigator.pop(context);
+    messenger.showSnackBar(
+      SnackBar(content: Text(controller.statusMessage ?? 'Order updated')),
     );
   }
 
@@ -6512,39 +6547,13 @@ class ReferenceOrderPanel extends StatelessWidget {
                 child: const Text('Back'),
               ),
               TextButton(
-                onPressed: () async {
-                  await controller.parkCurrentOrder();
-                  if (!context.mounted) return;
-                  if (controller.cartLines.isEmpty &&
-                      controller.selectedCustomer != null) {
-                    Navigator.pop(context);
-                  }
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        controller.statusMessage ?? 'Order updated',
-                      ),
-                    ),
-                  );
-                },
+                onPressed:
+                    () => _complete(context, park: true, closeDialog: true),
                 child: const Text('Park Order'),
               ),
               FilledButton(
-                onPressed: () async {
-                  await controller.submitCurrentOrder();
-                  if (!context.mounted) return;
-                  if (controller.cartLines.isEmpty &&
-                      controller.selectedCustomer != null) {
-                    Navigator.pop(context);
-                  }
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        controller.statusMessage ?? 'Order updated',
-                      ),
-                    ),
-                  );
-                },
+                onPressed:
+                    () => _complete(context, park: false, closeDialog: true),
                 child: const Text('Submit Order'),
               ),
             ],
